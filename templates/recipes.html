@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>レシピ管理</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1><i class="bi bi-journal-text"></i> レシピ管理</h1>
+            <a href="{{ url_for('add_recipe') }}" class="btn btn-primary">
+                <i class="bi bi-plus-circle"></i> 新規レシピ登録
+            </a>
+        </div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        {% if recipes %}
+            <div class="row">
+                {% for recipe in recipes %}
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">{{ recipe.name }}</h5>
+                            {% if recipe.description %}
+                            <p class="card-text text-muted">{{ recipe.description }}</p>
+                            {% endif %}
+                            <hr>
+                            <h6 class="text-muted mb-3">含まれる原料:</h6>
+                            <ul class="list-group list-group-flush mb-3">
+                                {% for item in recipe.items %}
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <span>
+                                        {{ item.material.name }}
+                                        {% if item.lot_name %}
+                                        <span class="badge bg-secondary">{{ item.lot_name }}</span>
+                                        {% endif %}
+                                    </span>
+                                    <span class="badge bg-primary rounded-pill">{{ item.quantity }} {{ item.material.unit }}</span>
+                                </li>
+                                {% endfor %}
+                            </ul>
+                            <small class="text-muted">
+                                <i class="bi bi-calendar3"></i> 作成日: {{ recipe.date_created.strftime('%Y/%m/%d %H:%M') }}
+                            </small>
+                        </div>
+                        <div class="card-footer bg-transparent">
+                            <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#useRecipeModal{{ recipe.id }}">
+                                <i class="bi bi-play-circle"></i> 使用予約作成
+                            </button>
+                            <a href="{{ url_for('edit_recipe', id=recipe.id) }}" class="btn btn-warning btn-sm">
+                                <i class="bi bi-pencil"></i> 編集
+                            </a>
+                            <a href="{{ url_for('delete_recipe', id=recipe.id) }}" class="btn btn-danger btn-sm" 
+                               onclick="return confirm('本当に削除しますか？')">
+                                <i class="bi bi-trash"></i> 削除
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Use Recipe Modal -->
+                <div class="modal fade" id="useRecipeModal{{ recipe.id }}" tabindex="-1" aria-labelledby="useRecipeModalLabel{{ recipe.id }}" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <form method="POST" action="{{ url_for('use_recipe', recipe_id=recipe.id) }}">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="useRecipeModalLabel{{ recipe.id }}">
+                                        レシピ「{{ recipe.name }}」から使用予約を作成
+                                    </h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <div class="mb-3">
+                                        <label for="user_name{{ recipe.id }}" class="form-label">使用者名（任意）</label>
+                                        <input type="text" class="form-control" id="user_name{{ recipe.id }}" name="user_name" placeholder="例: 山田太郎">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="purpose{{ recipe.id }}" class="form-label">使用目的（任意）</label>
+                                        <input type="text" class="form-control" id="purpose{{ recipe.id }}" name="purpose" placeholder="例: 試作品A">
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="scheduled_date{{ recipe.id }}" class="form-label">使用予定日（任意）</label>
+                                        <input type="date" class="form-control" id="scheduled_date{{ recipe.id }}" name="scheduled_date">
+                                    </div>
+                                    <div class="alert alert-info">
+                                        <strong>このレシピに含まれる原料:</strong>
+                                        <ul class="mb-0 mt-2">
+                                            {% for item in recipe.items %}
+                                            <li>{{ item.material.name }}: {{ item.quantity }} {{ item.material.unit }}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
+                                    <button type="submit" class="btn btn-success">使用予約作成</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i> レシピが登録されていません。
+            </div>
+        {% endif %}
+
+        <a href="{{ url_for('index') }}" class="btn btn-secondary mt-3">
+            <i class="bi bi-arrow-left"></i> 在庫に戻る
+        </a>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

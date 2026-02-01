@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>レシピ編集</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        .material-row {
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+        }
+        .material-row:hover {
+            background-color: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4"><i class="bi bi-pencil"></i> レシピ編集</h1>
+        <form method="POST">
+            {{ form.hidden_tag() }}
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        {{ form.name.label(class="form-label") }}
+                        {{ form.name(class="form-control", placeholder="例: 試作品A用配合") }}
+                    </div>
+                    <div class="mb-3">
+                        {{ form.description.label(class="form-label") }}
+                        {{ form.description(class="form-control", placeholder="例: 試作品Aに使用する原料の配合") }}
+                    </div>
+                </div>
+            </div>
+
+            <hr class="my-4">
+            <h4 class="mb-3"><i class="bi bi-box-seam"></i> 原料の組み合わせ</h4>
+            <p class="text-muted">各原料の使用量を入力してください。使用しない原料は空欄のままにしてください。</p>
+
+            <div class="row">
+                {% for material in materials %}
+                {% set recipe_item = recipe.items|selectattr('material_id', 'equalto', material.id)|first %}
+                <div class="col-md-6">
+                    <div class="material-row">
+                        <div class="row align-items-center">
+                            <div class="col-md-6">
+                                <label class="form-label fw-bold">{{ material.name }}</label>
+                                <small class="text-muted d-block">単位: {{ material.unit }}</small>
+                            </div>
+                            <div class="col-md-6">
+                                <input type="number" 
+                                       step="0.001" 
+                                       min="0"
+                                       class="form-control" 
+                                       name="material_{{ material.id }}_quantity" 
+                                       placeholder="数量"
+                                       value="{{ recipe_item.quantity if recipe_item else '' }}">
+                                <input type="text" 
+                                       class="form-control mt-2" 
+                                       name="material_{{ material.id }}_lot_name" 
+                                       placeholder="ロット名（任意）"
+                                       value="{{ recipe_item.lot_name if recipe_item and recipe_item.lot_name else '' }}">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="mt-4">
+                {{ form.submit(class="btn btn-primary btn-lg") }}
+                <a href="{{ url_for('recipes') }}" class="btn btn-secondary btn-lg">キャンセル</a>
+            </div>
+        </form>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
