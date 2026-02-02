@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}設定 - 在庫管理システム{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h3><i class="bi bi-gear-fill"></i> システム設定</h3>
+                </div>
+                <div class="card-body">
+                    <!-- データベース設定 -->
+                    <div class="mb-4">
+                        <h5 class="border-bottom pb-2"><i class="bi bi-database"></i> データベース設定</h5>
+                        
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i> 
+                            <strong>複数人での利用について</strong><br>
+                            共有フォルダ（ネットワークドライブやクラウド同期フォルダ）をデータベースフォルダに指定することで、
+                            複数の人が同じデータベースにアクセスできます。
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label"><strong>現在のデータベースフォルダ</strong></label>
+                            <div class="input-group">
+                                <span class="form-control bg-light">{{ db_folder }}</span>
+                                <button class="btn btn-outline-secondary" type="button" onclick="copyToClipboard('{{ db_folder }}')">
+                                    <i class="bi bi-clipboard"></i> コピー
+                                </button>
+                            </div>
+                            <small class="text-muted">データベースファイルパス: {{ db_path }}</small>
+                        </div>
+                        
+                        <form method="POST" action="{{ url_for('change_database_folder') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-warning">
+                                <i class="bi bi-folder2-open"></i> データベースフォルダを変更
+                            </button>
+                        </form>
+                        
+                        <div class="alert alert-warning mt-3">
+                            <i class="bi bi-exclamation-triangle"></i> 
+                            <strong>注意:</strong> フォルダを変更した後は、アプリケーションを再起動してください。
+                        </div>
+                    </div>
+                    
+                    <!-- 使用方法 -->
+                    <div class="mb-4">
+                        <h5 class="border-bottom pb-2"><i class="bi bi-question-circle"></i> 複数人で利用する方法</h5>
+                        
+                        <ol>
+                            <li class="mb-2">
+                                <strong>共有フォルダを準備</strong><br>
+                                <small class="text-muted">
+                                    ネットワーク共有フォルダ（例: \\server\shared\在庫管理）や
+                                    クラウド同期フォルダ（OneDrive、Googleドライブなど）を用意します。
+                                </small>
+                            </li>
+                            <li class="mb-2">
+                                <strong>各PCでフォルダを設定</strong><br>
+                                <small class="text-muted">
+                                    各ユーザーのPCで「データベースフォルダを変更」ボタンから同じ共有フォルダを指定します。
+                                </small>
+                            </li>
+                            <li class="mb-2">
+                                <strong>アプリを再起動</strong><br>
+                                <small class="text-muted">
+                                    設定後、アプリケーションを再起動すると、共有データベースにアクセスできます。
+                                </small>
+                            </li>
+                        </ol>
+                        
+                        <div class="alert alert-primary">
+                            <i class="bi bi-lightbulb"></i> 
+                            <strong>ヒント:</strong> 
+                            同時に複数人が編集する場合は、予約の実行などのタイミングが重ならないよう注意してください。
+                        </div>
+                    </div>
+                    
+                    <!-- バックアップ推奨 -->
+                    <div class="mb-4">
+                        <h5 class="border-bottom pb-2"><i class="bi bi-shield-check"></i> バックアップについて</h5>
+                        <p>重要なデータを保護するため、定期的にバックアップを作成してください。</p>
+                        <a href="{{ url_for('backup_management') }}" class="btn btn-success">
+                            <i class="bi bi-shield-fill"></i> バックアップ管理画面へ
+                        </a>
+                    </div>
+                </div>
+                <div class="card-footer text-end">
+                    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+                        <i class="bi bi-arrow-left"></i> ダッシュボードに戻る
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(function() {
+        alert('クリップボードにコピーしました');
+    }, function(err) {
+        console.error('コピーに失敗しました: ', err);
+    });
+}
+</script>
+{% endblock %}

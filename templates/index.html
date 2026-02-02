@@ -1,117 +1,96 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>原料重量在庫管理</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        .alert-row {
-            animation: blink 1.5s infinite;
-        }
-        @keyframes blink {
-            0%, 50%, 100% { background-color: #f8d7da; }
-            25%, 75% { background-color: #dc3545; color: #000; }
-        }
-    </style>
-</head>
-<body>
-    <div class="container mt-5">
-        <h1 class="mb-4">原料重量在庫管理</h1>
-        
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-                        {{ message }}
-                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                    </div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        
-        <a href="{{ url_for('add') }}" class="btn btn-primary mb-3">新規原料追加</a>
-        <a href="{{ url_for('dashboard') }}" class="btn btn-info mb-3">ダッシュボード</a>
-        <a href="{{ url_for('reservations') }}" class="btn btn-warning mb-3">予約管理</a>
-        <a href="{{ url_for('recipes') }}" class="btn btn-success mb-3">レシピ管理</a>
-        <a href="{{ url_for('backup_management') }}" class="btn btn-dark mb-3">
-            <i class="bi bi-shield-check"></i> バックアップ
-        </a>
-        <a href="{{ url_for('export') }}" class="btn btn-secondary mb-3">CSVエクスポート</a>
-        <form method="GET" class="mb-3">
-            <div class="input-group">
-                <input type="text" name="search" class="form-control" placeholder="検索..." value="{{ search }}">
-                <button class="btn btn-outline-secondary" type="submit">検索</button>
-            </div>
-        </form>
-        <div class="mb-3">
-            <a href="{{ url_for('index', sort_by='name', search=search) }}" class="btn btn-link">名前順</a>
-            <a href="{{ url_for('index', sort_by='weight', search=search) }}" class="btn btn-link">重量順</a>
+{% extends "base.html" %}
+
+{% block title %}原料一覧 - 在庫管理システム{% endblock %}
+
+{% block extra_style %}
+.alert-row {
+    animation: blink 1.5s infinite;
+}
+@keyframes blink {
+    0%, 50%, 100% { background-color: #f8d7da; }
+    25%, 75% { background-color: #dc3545; color: #000; }
+}
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1 class="mb-4">原料一覧</h1>
+    
+    <form method="GET" class="mb-3">
+        <div class="input-group">
+            <input type="text" name="search" class="form-control" placeholder="検索..." value="{{ search }}">
+            <button class="btn btn-outline-secondary" type="submit">検索</button>
         </div>
-        <table class="table table-striped table-bordered">
-            <thead class="table-dark">
-                <tr>
-                    <th>ID</th>
-                    <th>名前</th>
-                    <th>現在量</th>
-                    <th>予測在庫</th>
-                    <th>単位</th>
-                    <th>最低量</th>
-                    <th>状態</th>
-                    <th>操作</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for material in materials %}
-                {% set total_lot_weight = material.get_total_lot_weight() %}
-                {% set predicted = material.get_predicted_stock() %}
-                {% set is_alert = material.is_low_stock_alert() %}
-                <tr class="{% if is_alert %}alert-row{% elif total_lot_weight < material.min_weight %}table-warning{% endif %}">
-                    <td>{{ material.id }}</td>
-                    <td>
-                        {{ material.name }}
-                        <a href="{{ url_for('lots', material_id=material.id) }}" class="btn btn-sm btn-outline-secondary">
-                            📦 ロット管理 ({{ material.lots|length }})
-                        </a>
-                    </td>
-                    <td>{{ "%.2f"|format(total_lot_weight) }}</td>
-                    <td>
-                        <strong>{{ "%.2f"|format(predicted) }}</strong>
-                        {% if is_alert %}
-                            <span class="badge bg-danger">アラート</span>
-                        {% endif %}
-                    </td>
-                    <td>{{ material.unit }}</td>
-                    <td>{{ material.min_weight }}</td>
-                    <td>
-                        {% if is_alert %}
-                            <span class="badge bg-danger">⚠️ 補充必要</span>
-                            {% if material.email %}
-                                {% set subject = "【在庫アラート】" + material.name + "の補充が必要です" %}
-                                {% set body = "在庫管理システムからの自動通知\n\n原料名: " + material.name + "\n現在量: " + material.weight|string + " " + material.unit + "\n最低量: " + material.min_weight|string + " " + material.unit + "\n予測在庫量: " + "%.2f"|format(predicted) + " " + material.unit + "\n\n予測在庫量が最低量を下回る見込みです。\n至急、補充の手配をお願いします。\n\n※このメールは在庫管理システムから送信されています。" %}
-                                <a href="mailto:{{ material.email }}?subject={{ subject|urlencode }}&body={{ body|urlencode }}" class="btn btn-danger btn-sm">
-                                    📧 メール送信
-                                </a>
-                            {% else %}
-                                <small class="text-muted">(メール未登録)</small>
-                            {% endif %}
-                        {% elif material.weight < material.min_weight %}
-                            <span class="badge bg-warning">現在低在庫</span>
-                        {% else %}
-                            <span class="badge bg-success">正常</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        <a href="{{ url_for('edit', id=material.id) }}" class="btn btn-warning btn-sm">編集</a>
-                        <a href="{{ url_for('delete', id=material.id) }}" class="btn btn-danger btn-sm" onclick="return confirm('削除しますか？')">削除</a>
-                        <a href="{{ url_for('reserve_use', id=material.id) }}" class="btn btn-info btn-sm">使用予約</a>
-                        <a href="{{ url_for('reserve_replenish', id=material.id) }}" class="btn btn-success btn-sm">補充予約</a>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    </form>
+    <div class="mb-3">
+        <a href="{{ url_for('index', sort_by='name', search=search) }}" class="btn btn-link">名前順</a>
+        <a href="{{ url_for('index', sort_by='weight', search=search) }}" class="btn btn-link">重量順</a>
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+    <table class="table table-striped table-bordered">
+        <thead class="table-dark">
+            <tr>
+                <th>ID</th>
+                <th>名前</th>
+                <th>現在量</th>
+                <th>予測在庫</th>
+                <th>単位</th>
+                <th>最低量</th>
+                <th>状態</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for material in materials %}
+            {% set total_lot_weight = material.get_total_lot_weight() %}
+            {% set predicted = material.get_predicted_stock() %}
+            {% set is_alert = material.is_low_stock_alert() %}
+            <tr class="{% if is_alert %}alert-row{% elif total_lot_weight < material.min_weight %}table-warning{% endif %}">
+                <td>{{ material.id }}</td>
+                <td>
+                    {{ material.name }}
+                    <a href="{{ url_for('lots', material_id=material.id) }}" class="btn btn-sm btn-outline-secondary">
+                        📦 ロット管理 ({{ material.lots|length }})
+                    </a>
+                </td>
+                <td>{{ "%.2f"|format(total_lot_weight) }}</td>
+                <td>
+                    <strong>{{ "%.2f"|format(predicted) }}</strong>
+                    {% if is_alert %}
+                        <span class="badge bg-danger">アラート</span>
+                    {% endif %}
+                </td>
+                <td>{{ material.unit }}</td>
+                <td>{{ material.min_weight }}</td>
+                <td>
+                    {% if is_alert %}
+                        <span class="badge bg-danger">⚠️ 補充必要</span>
+                        {% if material.email %}
+                            {% set subject = "【在庫アラート】" + material.name + "の補充が必要です" %}
+                            {% set body = "在庫管理システムからの自動通知\n\n原料名: " + material.name + "\n現在量: " + "%.2f"|format(total_lot_weight) + " " + material.unit + "\n最低量: " + material.min_weight|string + " " + material.unit + "\n予測在庫量: " + "%.2f"|format(predicted) + " " + material.unit + "\n\n予測在庫量が最低量を下回る見込みです。\n至急、補充の手配をお願いします。\n\n※このメールは在庫管理システムから送信されています。" %}
+                            <a href="mailto:{{ material.email }}?subject={{ subject|urlencode }}&body={{ body|urlencode }}" class="btn btn-danger btn-sm">
+                                📧 メール送信
+                            </a>
+                        {% else %}
+                            <small class="text-muted">(メール未登録)</small>
+                        {% endif %}
+                    {% elif total_lot_weight < material.min_weight %}
+                        <span class="badge bg-warning">現在低在庫</span>
+                    {% else %}
+                        <span class="badge bg-success">正常</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <a href="{{ url_for('material_stats', id=material.id) }}" class="btn btn-primary btn-sm" title="統計">
+                        <i class="bi bi-graph-up"></i> 統計
+                    </a>
+                    <a href="{{ url_for('edit', id=material.id) }}" class="btn btn-warning btn-sm">編集</a>
+                    <a href="{{ url_for('delete', id=material.id) }}" class="btn btn-danger btn-sm" onclick="return confirm('削除しますか？')">削除</a>
+                    <a href="{{ url_for('reserve_use', id=material.id) }}" class="btn btn-info btn-sm">使用予約</a>
+                    <a href="{{ url_for('reserve_replenish', id=material.id) }}" class="btn btn-success btn-sm">補充予約</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

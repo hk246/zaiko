@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}予約編集 - 在庫管理システム{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h3><i class="bi bi-pencil-square"></i> 予約編集</h3>
+        </div>
+        <div class="card-body">
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="mb-3">
+                    <label class="form-label"><strong>原料</strong></label>
+                    <p class="form-control-plaintext">{{ reservation.material.name }}</p>
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label"><strong>種類</strong></label>
+                    <p class="form-control-plaintext">
+                        {% if reservation.type == 'use' %}
+                        <span class="badge bg-danger">使用</span>
+                        {% else %}
+                        <span class="badge bg-success">補充</span>
+                        {% endif %}
+                    </p>
+                </div>
+                
+                <div class="mb-3">
+                    <label for="quantity" class="form-label">予約量 <span class="text-danger">*</span></label>
+                    <div class="input-group">
+                        <input type="number" step="0.001" class="form-control" id="quantity" 
+                               name="quantity" value="{{ reservation.quantity }}" required>
+                        <span class="input-group-text">{{ reservation.material.unit }}</span>
+                    </div>
+                </div>
+                
+                {% if reservation.type == 'use' %}
+                <div class="mb-3">
+                    <label for="lot_id" class="form-label">ロット</label>
+                    <select class="form-select" id="lot_id" name="lot_id">
+                        <option value="">-- 実行時に選択 --</option>
+                        {% for lot in reservation.material.lots %}
+                        <option value="{{ lot.id }}" {% if reservation.lot_id == lot.id %}selected{% endif %}>
+                            {{ lot.lot_name }} (在庫: {{ "%.3f"|format(lot.weight) }} {{ reservation.material.unit }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <small class="form-text text-muted">予約時はロット未選択でも可。実行時に必須。</small>
+                </div>
+                {% else %}
+                <div class="mb-3">
+                    <label for="lot_name" class="form-label">ロット名</label>
+                    <input type="text" class="form-control" id="lot_name" name="lot_name" 
+                           value="{{ reservation.lot_name or '' }}" placeholder="例: ロットA">
+                    <small class="form-text text-muted">予約時は未入力でも可。実行時に必須。</small>
+                </div>
+                {% endif %}
+                
+                <div class="mb-3">
+                    <label for="scheduled_date" class="form-label">予定日</label>
+                    <input type="date" class="form-control" id="scheduled_date" name="scheduled_date" 
+                           value="{{ reservation.scheduled_date.strftime('%Y-%m-%d') if reservation.scheduled_date else '' }}">
+                </div>
+                
+                <div class="mb-3">
+                    <label for="user_name" class="form-label">使用者名</label>
+                    <input type="text" class="form-control" id="user_name" name="user_name" 
+                           value="{{ reservation.user_name or '' }}" placeholder="例: 山田太郎">
+                </div>
+                
+                <div class="mb-3">
+                    <label for="purpose" class="form-label">目的</label>
+                    <input type="text" class="form-control" id="purpose" name="purpose" 
+                           value="{{ reservation.purpose or '' }}" placeholder="例: 製品A製造">
+                </div>
+                
+                <div class="d-flex justify-content-between">
+                    <a href="{{ url_for('reservations') }}" class="btn btn-secondary">
+                        <i class="bi bi-arrow-left"></i> 戻る
+                    </a>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle"></i> 更新
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

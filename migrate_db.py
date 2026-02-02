@@ -176,6 +176,17 @@ try:
 except sqlite3.Error as e:
     print(f"RecipeItemテーブル作成エラー: {e}")
 
+try:
+    # executed_dateカラムをReservationテーブルに追加
+    cursor.execute('ALTER TABLE reservation ADD COLUMN executed_date DATETIME')
+    conn.commit()
+    print("✓ executed_dateカラムを追加しました")
+except sqlite3.OperationalError as e:
+    if "duplicate column name" in str(e):
+        print("✓ executed_dateカラムは既に存在します")
+    else:
+        print(f"エラー: {e}")
+
 conn.close()
 print("\n✅ マイグレーション完了！")
 

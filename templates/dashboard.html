@@ -14,6 +14,46 @@
             font-family: 'Inter', sans-serif;
         }
         
+        body {
+            padding-top: 76px;
+        }
+        
+        .navbar-custom {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .quick-actions {
+            position: fixed;
+            top: 70px;
+            right: 20px;
+            z-index: 1000;
+        }
+        
+        .quick-action-btn {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transition: all 0.3s ease;
+            font-size: 1.5rem;
+        }
+        
+        .quick-action-btn:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+        }
+        
+        .quick-action-btn.main {
+            width: 64px;
+            height: 64px;
+            font-size: 1.8rem;
+        }
+        
     <style>
         :root {
             --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -387,6 +427,63 @@
     </style>
 </head>
 <body>
+    <!-- ナビゲーションバー -->
+    <nav class="navbar navbar-expand-lg navbar-dark navbar-custom fixed-top">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="{{ url_for('index') }}">
+                <i class="bi bi-box-seam-fill"></i> 在庫管理システム
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="{{ url_for('dashboard') }}">
+                            <i class="bi bi-speedometer2"></i> ダッシュボード
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('index') }}">
+                            <i class="bi bi-list-ul"></i> 原料一覧
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('reservations') }}">
+                            <i class="bi bi-calendar-check"></i> 予約管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('recipes') }}">
+                            <i class="bi bi-journal-text"></i> レシピ管理
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('backup_management') }}">
+                            <i class="bi bi-shield-check"></i> バックアップ
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- クイックアクションメニュー -->
+    <div class="quick-actions">
+        <a href="{{ url_for('add') }}" class="btn btn-success quick-action-btn main" title="新規原料追加" data-bs-toggle="tooltip">
+            <i class="bi bi-plus-lg"></i>
+        </a>
+        <a href="{{ url_for('reservations') }}" class="btn btn-warning quick-action-btn" title="予約管理" data-bs-toggle="tooltip">
+            <i class="bi bi-calendar-check"></i>
+        </a>
+        <a href="{{ url_for('recipes') }}" class="btn btn-info quick-action-btn" title="レシピ管理" data-bs-toggle="tooltip">
+            <i class="bi bi-journal-text"></i>
+        </a>
+        <a href="{{ url_for('export') }}" class="btn btn-secondary quick-action-btn" title="CSVエクスポート" data-bs-toggle="tooltip">
+            <i class="bi bi-download"></i>
+        </a>
+    </div>
+
     <div class="container-fluid mt-4 px-4">
         <!-- ヘッダー -->
         <div class="dashboard-header">
@@ -404,9 +501,6 @@
                     <button class="btn btn-outline-primary" onclick="refreshData()">
                         <i class="bi bi-arrow-clockwise"></i> 更新
                     </button>
-                    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
-                        <i class="bi bi-arrow-left"></i> 在庫一覧
-                    </a>
                 </div>
             </div>
         </div>
@@ -431,90 +525,55 @@
             </div>
         </div>
 
-        <!-- クイックアクション -->
-        <div class="row mb-4">
-            <div class="col-12">
-                <div class="card-modern">
-                    <div class="card-body p-4">
-                        <h5 class="mb-3"><i class="bi bi-lightning-charge-fill text-warning"></i> クイックアクション</h5>
-                        <div class="row g-3">
-                            <div class="col-6 col-md-3 col-xl-2">
-                                <a href="{{ url_for('add') }}" class="quick-action-btn" style="background: var(--primary-gradient); color: #000;">
-                                    <i class="bi bi-plus-circle" style="color: #000;"></i>
-                                    <span style="color: #000;">新規原料登録</span>
-                                </a>
-                            </div>
-                            <div class="col-6 col-md-3 col-xl-2">
-                                <a href="{{ url_for('reservations') }}" class="quick-action-btn" style="background: var(--warning-gradient); color: #000;">
-                                    <i class="bi bi-calendar-check" style="color: #000;"></i>
-                                    <span style="color: #000;">予約管理</span>
-                                </a>
-                            </div>
-                            <div class="col-6 col-md-3 col-xl-2">
-                                <a href="{{ url_for('recipes') }}" class="quick-action-btn" style="background: var(--success-gradient); color: #000;">
-                                    <i class="bi bi-journal-text" style="color: #000;"></i>
-                                    <span style="color: #000;">レシピ管理</span>
-                                </a>
-                            </div>
-                            <div class="col-6 col-md-3 col-xl-2">
-                                <a href="{{ url_for('backup_management') }}" class="quick-action-btn" style="background: var(--dark-gradient); color: #000;">
-                                    <i class="bi bi-shield-check" style="color: #000;"></i>
-                                    <span style="color: #000;">バックアップ</span>
-                                </a>
-                            </div>
-                            <div class="col-6 col-md-3 col-xl-2">
-                                <a href="{{ url_for('export') }}" class="quick-action-btn" style="background: var(--info-gradient); color: #000;">
-                                    <i class="bi bi-download" style="color: #000;"></i>
-                                    <span style="color: #000;">CSVエクスポート</span>
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <!-- 統計情報カード -->
         <div class="row">
             <div class="col-12 col-md-6 col-xl-3">
-                <div class="stat-card primary position-relative">
-                    <i class="bi bi-boxes stat-icon"></i>
-                    <div class="stat-label">総在庫品目数</div>
-                    <div class="stat-value" id="totalMaterials">
-                        <div class="skeleton" style="height: 56px; width: 80px;"></div>
+                <a href="{{ url_for('index') }}" class="text-decoration-none">
+                    <div class="stat-card primary position-relative" style="cursor: pointer; transition: transform 0.2s;">
+                        <i class="bi bi-boxes stat-icon"></i>
+                        <div class="stat-label">総在庫品目数</div>
+                        <div class="stat-value" id="totalMaterials">
+                            <div class="skeleton" style="height: 56px; width: 80px;"></div>
+                        </div>
+                        <div class="stat-sublabel">登録原料数</div>
                     </div>
-                    <div class="stat-sublabel">登録原料数</div>
-                </div>
+                </a>
             </div>
             <div class="col-12 col-md-6 col-xl-3">
-                <div class="stat-card danger position-relative">
-                    <i class="bi bi-exclamation-triangle stat-icon"></i>
-                    <div class="stat-label">低在庫アラート</div>
-                    <div class="stat-value" id="lowStockCount">
-                        <div class="skeleton" style="height: 56px; width: 80px;"></div>
+                <a href="#alertList" class="text-decoration-none">
+                    <div class="stat-card danger position-relative" style="cursor: pointer; transition: transform 0.2s;">
+                        <i class="bi bi-exclamation-triangle stat-icon"></i>
+                        <div class="stat-label">低在庫アラート</div>
+                        <div class="stat-value" id="lowStockCount">
+                            <div class="skeleton" style="height: 56px; width: 80px;"></div>
+                        </div>
+                        <div class="stat-sublabel">要補充原料</div>
                     </div>
-                    <div class="stat-sublabel">要補充原料</div>
-                </div>
+                </a>
             </div>
             <div class="col-12 col-md-6 col-xl-3">
-                <div class="stat-card warning position-relative">
-                    <i class="bi bi-clock-history stat-icon"></i>
-                    <div class="stat-label">期限切れ予約</div>
-                    <div class="stat-value" id="overdueReservations">
-                        <div class="skeleton" style="height: 56px; width: 80px;"></div>
+                <a href="{{ url_for('reservations') }}" class="text-decoration-none">
+                    <div class="stat-card warning position-relative" style="cursor: pointer; transition: transform 0.2s;">
+                        <i class="bi bi-clock-history stat-icon"></i>
+                        <div class="stat-label">期限切れ予約</div>
+                        <div class="stat-value" id="overdueReservations">
+                            <div class="skeleton" style="height: 56px; width: 80px;"></div>
+                        </div>
+                        <div class="stat-sublabel">要対応</div>
                     </div>
-                    <div class="stat-sublabel">要対応</div>
-                </div>
+                </a>
             </div>
             <div class="col-12 col-md-6 col-xl-3">
-                <div class="stat-card info position-relative">
-                    <i class="bi bi-calendar-week stat-icon"></i>
-                    <div class="stat-label">今週の予約</div>
-                    <div class="stat-value" id="weekReservations">
-                        <div class="skeleton" style="height: 56px; width: 80px;"></div>
+                <a href="{{ url_for('reservations') }}" class="text-decoration-none">
+                    <div class="stat-card info position-relative" style="cursor: pointer; transition: transform 0.2s;">
+                        <i class="bi bi-calendar-week stat-icon"></i>
+                        <div class="stat-label">今週の予約</div>
+                        <div class="stat-value" id="weekReservations">
+                            <div class="skeleton" style="height: 56px; width: 80px;"></div>
+                        </div>
+                        <div class="stat-sublabel">7日以内</div>
                     </div>
-                    <div class="stat-sublabel">7日以内</div>
-                </div>
+                </a>
             </div>
         </div>
 
@@ -601,17 +660,7 @@
             <div class="col-12">
                 <div class="card card-modern">
                     <div class="card-header-modern">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="bi bi-bar-chart-fill"></i> 在庫状況分析</h5>
-                            <div class="btn-group" role="group">
-                                <button type="button" class="btn btn-sm btn-light active" onclick="toggleChartType('bar')">
-                                    <i class="bi bi-bar-chart"></i> 棒グラフ
-                                </button>
-                                <button type="button" class="btn btn-sm btn-light" onclick="toggleChartType('line')">
-                                    <i class="bi bi-graph-up"></i> 折れ線
-                                </button>
-                            </div>
-                        </div>
+                        <h5 class="mb-0"><i class="bi bi-bar-chart-fill"></i> 在庫状況分析</h5>
                     </div>
                     <div class="card-body">
                         <div class="chart-container">
@@ -672,7 +721,6 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let chartInstance = null;
-        let currentChartType = 'bar';
         let allMaterials = [];
         let allAlerts = [];
         let allUseReservations = [];
@@ -747,14 +795,41 @@
                     actionBtn = `<a href="/open_excel/${material.id}" class="btn btn-sm btn-outline-light ms-2"><i class="bi bi-file-earmark-excel-fill"></i> Excel起動</a>`;
                 }
                 
+                // 期間情報の表示
+                let periodInfo = '';
+                if (material.critical_periods && material.critical_periods.length > 0) {
+                    const periods = material.critical_periods.map(period => {
+                        const startDate = new Date(period.start_date).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
+                        const endDate = period.end_date ? new Date(period.end_date).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' }) : '⚠️ 解消予定なし';
+                        const shortage = period.shortage.toFixed(1);
+                        const isPending = !period.end_date;
+                        return `<div class="mt-2 p-2 bg-white bg-opacity-25 rounded">
+                            <div class="d-flex align-items-center text-white">
+                                <i class="bi bi-calendar-x-fill fs-5 me-2"></i>
+                                <div class="flex-grow-1">
+                                    <div class="fw-bold">${startDate} 〜 ${endDate}</div>
+                                    <div class="small">
+                                        不足量: ${shortage}g | 最小在庫: ${period.min_stock.toFixed(1)}g
+                                        ${isPending ? ' | <span class="text-warning fw-bold">⚠️ 早急な補充必要</span>' : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>`;
+                    }).join('');
+                    periodInfo = `<div class="mt-2">${periods}</div>`;
+                }
+                
                 return `
-                    <div class="d-flex align-items-center justify-content-between py-2 border-bottom border-danger">
-                        <div>
-                            <strong>${material.name}</strong>: 
-                            予測 ${material.predicted}g / 最低 ${material.min_weight}g 
-                            <span class="badge bg-light text-dark">${shortage.toFixed(1)}g不足</span>
+                    <div class="d-flex align-items-start justify-content-between py-2 border-bottom border-danger">
+                        <div class="flex-grow-1">
+                            <div>
+                                <strong>${material.name}</strong>: 
+                                予測 ${material.predicted}g / 最低 ${material.min_weight}g 
+                                <span class="badge bg-light text-dark">${shortage.toFixed(1)}g不足</span>
+                            </div>
+                            ${periodInfo}
                         </div>
-                        <div>
+                        <div class="d-flex gap-2 ms-3">
                             <a href="/reserve_replenish/${material.id}" class="btn btn-sm btn-light">
                                 <i class="bi bi-plus-circle-fill"></i> 補充予約
                             </a>
@@ -800,6 +875,34 @@
                                              style="width: ${Math.max(0, Math.min(100, percentRemaining))}%"></div>
                                     </div>
                                     <small class="text-muted">${percentRemaining.toFixed(0)}% of minimum level</small>
+                                    ${material.critical_periods && material.critical_periods.length > 0 ? `
+                                        <div class="mt-3 p-3 border border-danger border-2 rounded" style="background: linear-gradient(135deg, #fff5f5 0%, #ffe5e5 100%);">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <i class="bi bi-exclamation-triangle-fill text-danger fs-5 me-2"></i>
+                                                <strong class="text-danger fs-6">⚠️ 在庫危機期間</strong>
+                                            </div>
+                                            ${material.critical_periods.map(period => {
+                                                const startDate = new Date(period.start_date).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
+                                                const endDate = period.end_date ? new Date(period.end_date).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' }) : '解消予定なし';
+                                                const isPending = !period.end_date;
+                                                return `<div class="alert alert-danger mb-2 py-2 px-3" style="border-left: 4px solid #dc3545;">
+                                                    <div class="d-flex align-items-center justify-content-between">
+                                                        <div class="flex-grow-1">
+                                                            <div class="fw-bold mb-1">
+                                                                <i class="bi bi-calendar-x-fill"></i> 
+                                                                <span class="fs-6">${startDate} 〜 ${endDate}</span>
+                                                            </div>
+                                                            <div class="small">
+                                                                <span class="badge bg-danger me-1">不足量: ${period.shortage.toFixed(1)}g</span>
+                                                                <span class="badge bg-dark">最小在庫: ${period.min_stock.toFixed(1)}g</span>
+                                                                ${isPending ? '<span class="badge bg-warning text-dark ms-1"><i class="bi bi-clock-fill"></i> 早急な補充が必要</span>' : ''}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>`;
+                                            }).join('')}
+                                        </div>
+                                    ` : ''}
                                 </div>
                                 <div class="d-flex flex-column gap-2 ms-3">
                                     <a href="/reserve_replenish/${material.id}" 
@@ -895,7 +998,7 @@
             }
 
             chartInstance = new Chart(ctx, {
-                type: currentChartType,
+                type: 'bar',
                 data: {
                     labels: labels,
                     datasets: [
@@ -1150,14 +1253,6 @@
             }
         }
 
-        function toggleChartType(type) {
-            currentChartType = type;
-            const buttons = document.querySelectorAll('.btn-group button');
-            buttons.forEach(btn => btn.classList.remove('active'));
-            event.target.closest('button').classList.add('active');
-            updateChart(allMaterials);
-        }
-
         function showError() {
             document.getElementById('alertList').innerHTML = 
                 '<div class="alert alert-danger m-3">統計データの取得に失敗しました。ページを更新してください。</div>';
@@ -1239,6 +1334,24 @@
         
         // 自動更新（5分ごと）
         setInterval(refreshData, 5 * 60 * 1000);
+
+        // ツールチップの初期化
+        const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+        const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+
+        // スムーズスクロール
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
     </script>
 </body>
 </html>

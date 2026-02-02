@@ -12,11 +12,85 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import shutil
 import os
+import json
 from pathlib import Path
+from tkinter import Tk, filedialog, messagebox
 
+# 設定ファイルのパス
+CONFIG_FILE = 'config.json'
+
+def load_config():
+    """設定ファイルを読み込む"""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_config(config):
+    """設定ファイルに保存"""
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
+def select_database_folder():
+    """データベースフォルダを選択"""
+    root = Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    
+    folder = filedialog.askdirectory(
+        title='データベースフォルダを選択してください',
+        initialdir=os.getcwd()
+    )
+    
+    root.destroy()
+    return folder
+
+def get_database_path():
+    """データベースパスを取得または設定"""
+    config = load_config()
+    
+    # 設定にデータベースフォルダがあるか確認
+    if 'database_folder' in config and os.path.exists(config['database_folder']):
+        db_folder = config['database_folder']
+    else:
+        # フォルダ選択ダイアログを表示
+        root = Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        
+        messagebox.showinfo(
+            'データベースフォルダの選択',
+            'データベースを保存するフォルダを選択してください。\n'
+            '共有フォルダを指定すると、複数人で同じデータベースを使用できます。'
+        )
+        
+        db_folder = select_database_folder()
+        root.destroy()
+        
+        if not db_folder:
+            messagebox.showerror('エラー', 'フォルダが選択されませんでした。\nデフォルトのinstanceフォルダを使用します。')
+            db_folder = os.path.join(os.getcwd(), 'instance')
+            os.makedirs(db_folder, exist_ok=True)
+        
+        # 設定を保存
+        config['database_folder'] = db_folder
+        save_config(config)
+    
+    # データベースファイルのパスを返す
+    db_path = os.path.join(db_folder, 'inventory.db')
+    return db_path
+
+# Flaskアプリケーションの初期化
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///inventory.db'
+
+# データベースパスを取得
+db_path = get_database_path()
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+
 db = SQLAlchemy(app)
 csrf = CSRFProtect(app)
 
@@ -43,8 +117,133 @@ class RawMaterial(db.Model):
         return total_current + replenish - use
     
     def is_low_stock_alert(self):
-        """予測在庫が最低量を下回るかチェック"""
-        return self.get_predicted_stock() < self.min_weight
+        """予測在庫が最低量を下回るかチェック（途中の期間も含む）"""
+        # 途中で最低量を下回る期間がある場合もアラートとする
+        critical_periods = self.get_critical_periods()
+        return len(critical_periods) > 0
+
+    def get_critical_periods(self):
+        """最低重量を下回る期間を計算"""
+        from datetime import datetime, timedelta
+        
+        # 現在の在庫量
+        current_stock = self.get_total_lot_weight()
+        
+        # 未実行の予約を日付順に取得
+        reservations = sorted(
+            [r for r in self.reservations if not r.executed and r.scheduled_date],
+            key=lambda x: x.scheduled_date
+        )
+        
+        if not reservations:
+            # 予約がない場合、現在の在庫が最低重量を下回っているかチェック
+            if current_stock < self.min_weight:
+                return [{
+                    'start_date': datetime.now().date(),
+                    'end_date': None,
+                    'min_stock': current_stock,
+                    'shortage': self.min_weight - current_stock
+                }]
+            return []
+        
+        critical_periods = []
+        running_stock = current_stock
+        period_start = None
+        period_start_date = None
+        min_stock_in_period = running_stock
+        
+        # 現在の在庫が既に不足している場合
+        if running_stock < self.min_weight:
+            period_start = True
+            period_start_date = datetime.now().date()
+            min_stock_in_period = running_stock
+        
+        # 各予約を時系列で処理
+        for reservation in reservations:
+            # 予約実行前の在庫状態をチェック
+            prev_stock = running_stock
+            
+            # 予約を実行
+            if reservation.type == 'use':
+                running_stock -= reservation.quantity
+            else:  # replenish
+                running_stock += reservation.quantity
+            
+            # 使用予約で最低重量を下回った場合、期間開始
+            if reservation.type == 'use' and prev_stock >= self.min_weight and running_stock < self.min_weight:
+                period_start = True
+                period_start_date = reservation.scheduled_date
+                min_stock_in_period = running_stock
+            
+            # 既に期間中で、さらに在庫が減少
+            elif period_start and running_stock < self.min_weight:
+                min_stock_in_period = min(min_stock_in_period, running_stock)
+            
+            # 補充予約で最低重量を上回った場合、期間終了
+            if reservation.type == 'replenish' and period_start and running_stock >= self.min_weight:
+                critical_periods.append({
+                    'start_date': period_start_date,
+                    'end_date': reservation.scheduled_date,
+                    'min_stock': min_stock_in_period,
+                    'shortage': self.min_weight - min_stock_in_period
+                })
+                period_start = False
+                period_start_date = None
+                min_stock_in_period = running_stock
+        
+        # 最後の期間が終了していない場合
+        if period_start:
+            critical_periods.append({
+                'start_date': period_start_date,
+                'end_date': None,  # 終了日未定（補充予約が必要）
+                'min_stock': min_stock_in_period,
+                'shortage': self.min_weight - min_stock_in_period
+            })
+        
+        return critical_periods
+
+    def get_usage_stats(self, period_days):
+        """指定期間の使用量・補充量を集計"""
+        from datetime import datetime, timedelta
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=period_days)
+        
+        # 実行済みの予約のみを対象（実行日時が記録されているもの）
+        executed_reservations = [r for r in self.reservations if r.executed and r.executed_date]
+        
+        # 期間内の予約をフィルタ
+        period_reservations = [
+            r for r in executed_reservations 
+            if start_date <= r.executed_date <= end_date
+        ]
+        
+        # 使用量と補充量を集計
+        total_used = sum(r.actual_quantity or r.quantity for r in period_reservations if r.type == 'use')
+        total_replenished = sum(r.actual_quantity or r.quantity for r in period_reservations if r.type == 'replenish')
+        
+        # 日別データ
+        daily_data = {}
+        for r in period_reservations:
+            date_key = r.executed_date.strftime('%Y-%m-%d')
+            if date_key not in daily_data:
+                daily_data[date_key] = {'used': 0, 'replenished': 0}
+            
+            if r.type == 'use':
+                daily_data[date_key]['used'] += r.actual_quantity or r.quantity
+            else:
+                daily_data[date_key]['replenished'] += r.actual_quantity or r.quantity
+        
+        return {
+            'period_days': period_days,
+            'start_date': start_date.strftime('%Y-%m-%d'),
+            'end_date': end_date.strftime('%Y-%m-%d'),
+            'total_used': round(total_used, 3),
+            'total_replenished': round(total_replenished, 3),
+            'net_change': round(total_replenished - total_used, 3),
+            'daily_data': daily_data,
+            'transaction_count': len(period_reservations)
+        }
 
     def __repr__(self):
         return f'<RawMaterial {self.name}>'
@@ -76,9 +275,11 @@ class Reservation(db.Model):
     scheduled_date = db.Column(db.Date, nullable=True)  # 予定日
     date = db.Column(db.DateTime, default=db.func.current_timestamp())  # 登録日
     executed = db.Column(db.Boolean, default=False)  # 実行済みかどうか
+    executed_date = db.Column(db.DateTime, nullable=True)  # 実行日時
 
     material = db.relationship('RawMaterial', backref=db.backref('reservations', lazy=True, cascade='all, delete-orphan'))
     lot = db.relationship('Lot', backref=db.backref('reservations', lazy=True, cascade='all, delete-orphan'))
+    recipe = db.relationship('Recipe', backref=db.backref('reservations', lazy=True))
 
     def is_overdue(self):
         """期限切れかどうかをチェック"""
@@ -153,7 +354,10 @@ def index():
     if sort_by == 'name':
         materials = materials.order_by(RawMaterial.name)
     elif sort_by == 'weight':
-        materials = materials.order_by(RawMaterial.weight)
+        # ソート用: SQLでは直接計算できないため、Pythonでソート
+        materials = materials.all()
+        materials = sorted(materials, key=lambda m: m.get_total_lot_weight())
+        return render_template('index.html', materials=materials, search=search, sort_by=sort_by)
     materials = materials.all()
     return render_template('index.html', materials=materials, search=search, sort_by=sort_by)
 
@@ -197,6 +401,12 @@ def edit(id):
         form.excel_path.data = material.excel_path
         form.action_type.data = material.action_type
     return render_template('edit.html', form=form)
+
+@app.route('/material_stats/<int:id>')
+def material_stats(id):
+    """原料の統計ページ"""
+    material = RawMaterial.query.get_or_404(id)
+    return render_template('material_stats.html', material=material)
 
 @app.route('/delete/<int:id>')
 def delete(id):
@@ -298,6 +508,25 @@ def add_lot(material_id):
     if form.validate_on_submit():
         lot = Lot(material_id=material_id, lot_name=form.lot_name.data, weight=form.weight.data)
         db.session.add(lot)
+        db.session.flush()  # lotのIDを取得するため
+        
+        # 統計用に実行済み予約を作成（ロット追加は補充扱い）
+        if form.weight.data > 0:
+            auto_reservation = Reservation(
+                material_id=material_id,
+                lot_id=lot.id,
+                lot_name=form.lot_name.data,
+                type='replenish',
+                quantity=form.weight.data,
+                actual_quantity=form.weight.data,
+                user_name='システム',
+                purpose=f'ロット追加（{form.lot_name.data}）',
+                scheduled_date=datetime.now(),
+                executed=True,
+                executed_date=datetime.now()
+            )
+            db.session.add(auto_reservation)
+        
         db.session.commit()
         flash(f'ロット「{form.lot_name.data}」を追加しました', 'success')
         return redirect(url_for('lots', material_id=material_id))
@@ -309,8 +538,32 @@ def edit_lot(id):
     lot = Lot.query.get_or_404(id)
     form = LotForm()
     if form.validate_on_submit():
+        old_weight = lot.weight
+        new_weight = form.weight.data
         lot.lot_name = form.lot_name.data
-        lot.weight = form.weight.data
+        lot.weight = new_weight
+        
+        # 重量が変化した場合、統計用に実行済み予約を作成
+        weight_diff = new_weight - old_weight
+        if weight_diff != 0:
+            transaction_type = 'replenish' if weight_diff > 0 else 'use'
+            quantity = abs(weight_diff)
+            
+            auto_reservation = Reservation(
+                material_id=lot.material_id,
+                lot_id=lot.id,
+                lot_name=lot.lot_name,
+                type=transaction_type,
+                quantity=quantity,
+                actual_quantity=quantity,
+                user_name='システム',
+                purpose=f'ロット直接編集（{lot.lot_name}）',
+                scheduled_date=datetime.now(),
+                executed=True,
+                executed_date=datetime.now()
+            )
+            db.session.add(auto_reservation)
+        
         db.session.commit()
         flash(f'ロット「{lot.lot_name}」を更新しました', 'success')
         return redirect(url_for('lots', material_id=lot.material_id))
@@ -324,9 +577,29 @@ def delete_lot(id):
     """ロット削除"""
     lot = Lot.query.get_or_404(id)
     material_id = lot.material_id
+    lot_name = lot.lot_name
+    lot_weight = lot.weight
+    
+    # 統計用に実行済み予約を作成（ロット削除は使用扱い）
+    if lot_weight > 0:
+        auto_reservation = Reservation(
+            material_id=material_id,
+            lot_id=None,  # ロット削除後なのでNone
+            lot_name=lot_name,
+            type='use',
+            quantity=lot_weight,
+            actual_quantity=lot_weight,
+            user_name='システム',
+            purpose=f'ロット削除（{lot_name}）',
+            scheduled_date=datetime.now(),
+            executed=True,
+            executed_date=datetime.now()
+        )
+        db.session.add(auto_reservation)
+    
     db.session.delete(lot)
     db.session.commit()
-    flash(f'ロット「{lot.lot_name}」を削除しました', 'success')
+    flash(f'ロット「{lot_name}」を削除しました', 'success')
     return redirect(url_for('lots', material_id=material_id))
 
 @app.route('/reservations')
@@ -338,10 +611,25 @@ def reservations():
     # 期限切れ予約を抽出
     overdue_reservations = [r for r in use_reservations + replenish_reservations if r.is_overdue()]
     
+    # レシピ予約をグループ化
+    recipe_groups = {}
+    for r in use_reservations:
+        if r.recipe_id:
+            if r.recipe_id not in recipe_groups:
+                recipe_groups[r.recipe_id] = {
+                    'recipe': r.recipe,
+                    'scheduled_date': r.scheduled_date,
+                    'user_name': r.user_name,
+                    'purpose': r.purpose,
+                    'reservations': []
+                }
+            recipe_groups[r.recipe_id]['reservations'].append(r)
+    
     return render_template('reservations.html', 
                          use_reservations=use_reservations,
                          replenish_reservations=replenish_reservations,
-                         overdue_count=len(overdue_reservations))
+                         overdue_count=len(overdue_reservations),
+                         recipe_groups=recipe_groups)
 
 @app.route('/execute_reservation/<int:id>', methods=['GET', 'POST'])
 def execute_reservation(id):
@@ -349,11 +637,22 @@ def execute_reservation(id):
     reservation = Reservation.query.get_or_404(id)
     material = reservation.material
     
-    # POSTリクエストの場合、実際の量を取得
+    # POSTリクエストの場合、実際の量とロット情報を取得
     if request.method == 'POST':
         actual_quantity = float(request.form.get('actual_quantity', reservation.quantity))
         reservation.actual_quantity = actual_quantity
         quantity_to_use = actual_quantity
+        
+        # 使用予約の場合はロット選択を取得
+        if reservation.type == 'use':
+            lot_id = request.form.get('lot_id')
+            if lot_id:
+                reservation.lot_id = int(lot_id)
+        # 補充予約の場合はロット名を取得
+        elif reservation.type == 'replenish':
+            lot_name = request.form.get('lot_name', '').strip()
+            if lot_name:
+                reservation.lot_name = lot_name
     else:
         # GETリクエストの場合は予約量を使用（後方互換性のため）
         quantity_to_use = reservation.quantity
@@ -363,67 +662,36 @@ def execute_reservation(id):
     try:
         if reservation.type == 'use':
             # 使用予約の実行
-            if reservation.lot_id:
-                # 既存ロットから減少
-                lot = reservation.lot
-                if lot.weight >= quantity_to_use:
-                    lot.weight -= quantity_to_use
-                else:
-                    flash(f'エラー: ロット「{lot.lot_name}」の在庫が不足しています', 'danger')
-                    return redirect(url_for('reservations'))
-            elif reservation.lot_name:
-                # 指定されたロット名のロットを探して減少
-                lot = Lot.query.filter_by(material_id=material.id, lot_name=reservation.lot_name).first()
-                if lot:
-                    if lot.weight >= quantity_to_use:
-                        lot.weight -= quantity_to_use
-                    else:
-                        flash(f'エラー: ロット「{lot.lot_name}」の在庫が不足しています', 'danger')
-                        return redirect(url_for('reservations'))
-                else:
-                    flash(f'エラー: ロット「{reservation.lot_name}」が見つかりません', 'danger')
-                    return redirect(url_for('reservations'))
+            if not reservation.lot_id:
+                flash('エラー: ロットを選択してください', 'danger')
+                return redirect(url_for('reservations'))
+            
+            lot = reservation.lot
+            if lot.weight >= quantity_to_use:
+                lot.weight -= quantity_to_use
             else:
-                # 全ロットから減少（古い順）
-                lots = Lot.query.filter_by(material_id=material.id).order_by(Lot.date_created.asc()).all()
-                remaining = quantity_to_use
-                for lot in lots:
-                    if remaining <= 0:
-                        break
-                    if lot.weight >= remaining:
-                        lot.weight -= remaining
-                        remaining = 0
-                    else:
-                        remaining -= lot.weight
-                        lot.weight = 0
-                
-                if remaining > 0:
-                    flash(f'警告: 在庫が不足しているため一部のみ実行しました（不足: {remaining} {material.unit}）', 'warning')
+                flash(f'エラー: ロット「{lot.lot_name}」の在庫が不足しています', 'danger')
+                return redirect(url_for('reservations'))
         
         elif reservation.type == 'replenish':
             # 補充予約の実行
-            if reservation.lot_name:
-                # 新規ロット名が指定されている場合
-                existing_lot = Lot.query.filter_by(material_id=material.id, lot_name=reservation.lot_name).first()
-                if existing_lot:
-                    # 既存ロットに追加
-                    existing_lot.weight += quantity_to_use
-                else:
-                    # 新規ロット作成
-                    new_lot = Lot(material_id=material.id, lot_name=reservation.lot_name, weight=quantity_to_use)
-                    db.session.add(new_lot)
-            elif reservation.lot_id:
+            if not reservation.lot_name:
+                flash('エラー: ロット名を入力してください', 'danger')
+                return redirect(url_for('reservations'))
+            
+            # 新規ロット名が指定されている場合
+            existing_lot = Lot.query.filter_by(material_id=material.id, lot_name=reservation.lot_name).first()
+            if existing_lot:
                 # 既存ロットに追加
-                lot = reservation.lot
-                lot.weight += quantity_to_use
+                existing_lot.weight += quantity_to_use
             else:
-                # ロット指定なし：デフォルトロット名で新規作成
-                default_lot_name = f"補充-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-                new_lot = Lot(material_id=material.id, lot_name=default_lot_name, weight=reservation.quantity)
+                # 新規ロット作成
+                new_lot = Lot(material_id=material.id, lot_name=reservation.lot_name, weight=quantity_to_use)
                 db.session.add(new_lot)
         
         # 予約を実行済みにマーク
         reservation.executed = True
+        reservation.executed_date = datetime.now()
         db.session.commit()
         flash(f'予約を実行しました: {material.name} ({quantity_to_use} {material.unit})', 'success')
     
@@ -432,6 +700,99 @@ def execute_reservation(id):
         flash(f'エラーが発生しました: {str(e)}', 'danger')
     
     return redirect(url_for('reservations'))
+
+@app.route('/execute_recipe/<int:recipe_id>', methods=['POST'])
+def execute_recipe(recipe_id):
+    """レシピ予約を一括実行"""
+    recipe = Recipe.query.get_or_404(recipe_id)
+    
+    # このレシピに紐づく未実行の使用予約を取得
+    reservations = Reservation.query.filter_by(
+        recipe_id=recipe_id,
+        type='use',
+        executed=False
+    ).all()
+    
+    if not reservations:
+        flash('実行する予約が見つかりません', 'warning')
+        return redirect(url_for('reservations'))
+    
+    try:
+        # 各原料の実績値を取得して実行
+        for reservation in reservations:
+            material = reservation.material
+            actual_quantity_key = f'actual_quantity_{reservation.id}'
+            actual_quantity = float(request.form.get(actual_quantity_key, reservation.quantity))
+            
+            # ロット選択を取得
+            lot_id_key = f'lot_id_{reservation.id}'
+            lot_id = request.form.get(lot_id_key)
+            
+            if not lot_id:
+                flash(f'エラー: {material.name}のロットを選択してください', 'danger')
+                db.session.rollback()
+                return redirect(url_for('reservations'))
+            
+            reservation.actual_quantity = actual_quantity
+            reservation.lot_id = int(lot_id)
+            
+            # 在庫を減少
+            lot = Lot.query.get(reservation.lot_id)
+            if not lot:
+                flash(f'エラー: ロットが見つかりません', 'danger')
+                db.session.rollback()
+                return redirect(url_for('reservations'))
+            
+            if lot.weight >= actual_quantity:
+                lot.weight -= actual_quantity
+            else:
+                flash(f'エラー: ロット「{lot.lot_name}」の在庫が不足しています', 'danger')
+                db.session.rollback()
+                return redirect(url_for('reservations'))
+            
+            # 予約を実行済みにマーク
+            reservation.executed = True
+            reservation.executed_date = datetime.now()
+        
+        db.session.commit()
+        flash(f'レシピ「{recipe.name}」の予約を一括実行しました', 'success')
+    
+    except Exception as e:
+        db.session.rollback()
+        flash(f'エラーが発生しました: {str(e)}', 'danger')
+    
+    return redirect(url_for('reservations'))
+
+@app.route('/edit_reservation/<int:id>', methods=['GET', 'POST'])
+def edit_reservation(id):
+    """予約編集"""
+    reservation = Reservation.query.get_or_404(id)
+    
+    if request.method == 'POST':
+        reservation.user_name = request.form.get('user_name', '')
+        reservation.purpose = request.form.get('purpose', '')
+        reservation.quantity = float(request.form.get('quantity', reservation.quantity))
+        
+        # 予定日の処理
+        scheduled_date_str = request.form.get('scheduled_date')
+        if scheduled_date_str:
+            reservation.scheduled_date = datetime.strptime(scheduled_date_str, '%Y-%m-%d').date()
+        
+        # ロット名/ロット選択の処理
+        if reservation.type == 'use':
+            lot_id = request.form.get('lot_id')
+            if lot_id:
+                reservation.lot_id = int(lot_id)
+        else:  # replenish
+            lot_name = request.form.get('lot_name', '').strip()
+            if lot_name:
+                reservation.lot_name = lot_name
+        
+        db.session.commit()
+        flash('予約を更新しました', 'success')
+        return redirect(url_for('reservations'))
+    
+    return render_template('edit_reservation.html', reservation=reservation)
 
 @app.route('/delete_reservation/<int:id>')
 def delete_reservation(id):
@@ -447,9 +808,11 @@ def export():
     materials = RawMaterial.query.all()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(['ID', '名前', '重量', '単位', '最低量'])
+    writer.writerow(['ID', '名前', '現在重量', '単位', '最低量', '予測在庫'])
     for material in materials:
-        writer.writerow([material.id, material.name, material.weight, material.unit, material.min_weight])
+        current_weight = material.get_total_lot_weight()
+        predicted = material.get_predicted_stock()
+        writer.writerow([material.id, material.name, round(current_weight, 2), material.unit, material.min_weight, round(predicted, 2)])
     output.seek(0)
     # BOM付きUTF-8でエンコードして日本語文字化けを防止
     csv_data = '\ufeff' + output.getvalue()
@@ -469,13 +832,14 @@ def send_alert_email(id):
     
     try:
         # メール内容
+        current_weight = material.get_total_lot_weight()
         predicted_stock = material.get_predicted_stock()
         subject = f"【在庫アラート】{material.name}の補充が必要です"
         body = f"""
 在庫管理システムからの自動通知
 
 原料名: {material.name}
-現在量: {material.weight} {material.unit}
+現在量: {current_weight:.2f} {material.unit}
 最低量: {material.min_weight} {material.unit}
 予測在庫量: {predicted_stock:.2f} {material.unit}
 
@@ -531,6 +895,18 @@ def api_stats():
         if material.is_low_stock_alert():
             total_weight = material.get_total_lot_weight()
             predicted = material.get_predicted_stock()
+            critical_periods = material.get_critical_periods()
+            
+            # 日付をJSON互換形式に変換
+            serialized_periods = []
+            for period in critical_periods:
+                serialized_periods.append({
+                    'start_date': period['start_date'].isoformat() if period['start_date'] else None,
+                    'end_date': period['end_date'].isoformat() if period['end_date'] else None,
+                    'min_stock': round(period['min_stock'], 2),
+                    'shortage': round(period['shortage'], 2)
+                })
+            
             alert_materials.append({
                 'id': material.id,
                 'name': material.name,
@@ -540,7 +916,8 @@ def api_stats():
                 'unit': material.unit,
                 'email': material.email,
                 'excel_path': material.excel_path,
-                'action_type': material.action_type
+                'action_type': material.action_type,
+                'critical_periods': serialized_periods
             })
     
     # 在庫状況データ
@@ -593,6 +970,29 @@ def api_stats():
         'replenish_reservations': replenish_list,
         'overdue_count': overdue_count,
         'week_reservations': week_reservations
+    })
+
+@app.route('/api/material_stats/<int:id>')
+def api_material_stats(id):
+    """原料の期間別統計データを取得"""
+    material = RawMaterial.query.get_or_404(id)
+    
+    # 各期間の統計を取得
+    stats = {
+        '1d': material.get_usage_stats(1),
+        '7d': material.get_usage_stats(7),
+        '1m': material.get_usage_stats(30),
+        '3m': material.get_usage_stats(90),
+        '6m': material.get_usage_stats(180),
+        '1y': material.get_usage_stats(365)
+    }
+    
+    return jsonify({
+        'material_id': material.id,
+        'material_name': material.name,
+        'current_stock': material.get_total_lot_weight(),
+        'unit': material.unit,
+        'stats': stats
     })
 
 # Recipe Management Routes
@@ -712,24 +1112,34 @@ def use_recipe(recipe_id):
     return redirect(url_for('reservations'))
 
 # Backup Management Routes
-BACKUP_FOLDER = 'backups'
-DB_PATH = 'instance/inventory.db'
+def get_backup_folder():
+    """バックアップフォルダのパスを取得"""
+    config = load_config()
+    if 'database_folder' in config:
+        return os.path.join(config['database_folder'], 'backups')
+    return 'backups'
+
+def get_db_path():
+    """データベースファイルのパスを取得"""
+    return app.config['SQLALCHEMY_DATABASE_URI'].replace('sqlite:///', '')
 
 def ensure_backup_folder():
     """バックアップフォルダの存在を確認し、なければ作成"""
-    if not os.path.exists(BACKUP_FOLDER):
-        os.makedirs(BACKUP_FOLDER)
+    backup_folder = get_backup_folder()
+    if not os.path.exists(backup_folder):
+        os.makedirs(backup_folder)
 
 @app.route('/backup')
 def backup_management():
     """バックアップ管理ページ"""
     ensure_backup_folder()
     backups = []
+    backup_folder = get_backup_folder()
     
-    if os.path.exists(BACKUP_FOLDER):
-        for filename in os.listdir(BACKUP_FOLDER):
+    if os.path.exists(backup_folder):
+        for filename in os.listdir(backup_folder):
             if filename.endswith('.db'):
-                filepath = os.path.join(BACKUP_FOLDER, filename)
+                filepath = os.path.join(backup_folder, filename)
                 stat = os.stat(filepath)
                 backups.append({
                     'filename': filename,
@@ -747,10 +1157,12 @@ def create_backup():
         ensure_backup_folder()
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         backup_filename = f'inventory_backup_{timestamp}.db'
-        backup_path = os.path.join(BACKUP_FOLDER, backup_filename)
+        backup_folder = get_backup_folder()
+        backup_path = os.path.join(backup_folder, backup_filename)
+        db_path = get_db_path()
         
-        if os.path.exists(DB_PATH):
-            shutil.copy2(DB_PATH, backup_path)
+        if os.path.exists(db_path):
+            shutil.copy2(db_path, backup_path)
             flash(f'バックアップを作成しました: {backup_filename}', 'success')
         else:
             flash('データベースファイルが見つかりません', 'danger')
@@ -763,19 +1175,22 @@ def create_backup():
 def restore_backup(filename):
     """バックアップから復元"""
     try:
-        backup_path = os.path.join(BACKUP_FOLDER, filename)
+        backup_folder = get_backup_folder()
+        backup_path = os.path.join(backup_folder, filename)
+        db_path = get_db_path()
         
         if not os.path.exists(backup_path):
             flash('指定されたバックアップファイルが見つかりません', 'danger')
             return redirect(url_for('backup_management'))
         
         # 現在のDBをバックアップ（復元前の安全策）
-        if os.path.exists(DB_PATH):
-            safety_backup = f'instance/inventory_before_restore_{datetime.now().strftime("%Y%m%d_%H%M%S")}.db'
-            shutil.copy2(DB_PATH, safety_backup)
+        if os.path.exists(db_path):
+            db_folder = os.path.dirname(db_path)
+            safety_backup = os.path.join(db_folder, f'inventory_before_restore_{datetime.now().strftime("%Y%m%d_%H%M%S")}.db')
+            shutil.copy2(db_path, safety_backup)
         
         # バックアップから復元
-        shutil.copy2(backup_path, DB_PATH)
+        shutil.copy2(backup_path, db_path)
         flash(f'バックアップから復元しました: {filename}', 'success')
     except Exception as e:
         flash(f'復元に失敗しました: {str(e)}', 'danger')
@@ -786,7 +1201,8 @@ def restore_backup(filename):
 def download_backup(filename):
     """バックアップファイルをダウンロード"""
     try:
-        backup_path = os.path.join(BACKUP_FOLDER, filename)
+        backup_folder = get_backup_folder()
+        backup_path = os.path.join(backup_folder, filename)
         if os.path.exists(backup_path):
             return send_file(backup_path, as_attachment=True, download_name=filename)
         else:
@@ -800,7 +1216,8 @@ def download_backup(filename):
 def delete_backup(filename):
     """バックアップファイルを削除"""
     try:
-        backup_path = os.path.join(BACKUP_FOLDER, filename)
+        backup_folder = get_backup_folder()
+        backup_path = os.path.join(backup_folder, filename)
         if os.path.exists(backup_path):
             os.remove(backup_path)
             flash(f'バックアップを削除しました: {filename}', 'success')
@@ -842,6 +1259,47 @@ def open_excel(id):
         flash(f'ファイルを開けませんでした: {str(e)}', 'danger')
     
     return redirect(url_for('dashboard'))
+
+@app.route('/settings')
+def settings():
+    """設定画面"""
+    config = load_config()
+    current_db_folder = config.get('database_folder', 'デフォルト（instance）')
+    current_db_path = app.config['SQLALCHEMY_DATABASE_URI'].replace('sqlite:///', '')
+    
+    return render_template('settings.html', 
+                         db_folder=current_db_folder,
+                         db_path=current_db_path)
+
+@app.route('/change_database_folder', methods=['POST'])
+def change_database_folder():
+    """データベースフォルダを変更"""
+    try:
+        from tkinter import Tk, filedialog, messagebox
+        
+        root = Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        
+        folder = filedialog.askdirectory(
+            title='新しいデータベースフォルダを選択してください',
+            initialdir=os.path.dirname(app.config['SQLALCHEMY_DATABASE_URI'].replace('sqlite:///', ''))
+        )
+        
+        root.destroy()
+        
+        if folder:
+            config = load_config()
+            config['database_folder'] = folder
+            save_config(config)
+            
+            flash(f'データベースフォルダを変更しました: {folder}\nアプリを再起動してください。', 'success')
+        else:
+            flash('フォルダが選択されませんでした', 'warning')
+    except Exception as e:
+        flash(f'エラー: {str(e)}', 'danger')
+    
+    return redirect(url_for('settings'))
 
 if __name__ == '__main__':
     with app.app_context():

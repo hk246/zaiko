@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block title %}{{ material.name }} - 統計 - 在庫管理システム{% endblock %}
+
+{% block extra_style %}
+.period-btn {
+    transition: all 0.3s ease;
+}
+.period-btn.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    transform: scale(1.05);
+}
+.stat-box {
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    transition: transform 0.3s ease;
+}
+.stat-box:hover {
+    transform: translateY(-5px);
+}
+.chart-container {
+    position: relative;
+    height: 400px;
+    margin-bottom: 30px;
+}
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1><i class="bi bi-graph-up"></i> {{ material.name }} の使用統計</h1>
+            <p class="text-muted">期間別の使用量・補充量の推移を確認できます</p>
+        </div>
+    </div>
+
+    <!-- 期間選択ボタン -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title mb-3">表示期間</h5>
+            <div class="btn-group w-100" role="group">
+                <button type="button" class="btn btn-outline-primary period-btn active" data-period="1d">1日</button>
+                <button type="button" class="btn btn-outline-primary period-btn" data-period="7d">7日</button>
+                <button type="button" class="btn btn-outline-primary period-btn" data-period="1m">1ヶ月</button>
+                <button type="button" class="btn btn-outline-primary period-btn" data-period="3m">3ヶ月</button>
+                <button type="button" class="btn btn-outline-primary period-btn" data-period="6m">6ヶ月</button>
+                <button type="button" class="btn btn-outline-primary period-btn" data-period="1y">1年</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 統計サマリー -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stat-box bg-danger bg-gradient text-white">
+                <h6 class="mb-2">総使用量</h6>
+                <h2 id="totalUsed" class="mb-0">-</h2>
+                <small id="usedUnit">g</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-box bg-success bg-gradient text-white">
+                <h6 class="mb-2">総補充量</h6>
+                <h2 id="totalReplenished" class="mb-0">-</h2>
+                <small id="replenishedUnit">g</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-box bg-info bg-gradient text-white">
+                <h6 class="mb-2">純変化量</h6>
+                <h2 id="netChange" class="mb-0">-</h2>
+                <small id="netUnit">g</small>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stat-box bg-secondary bg-gradient text-white">
+                <h6 class="mb-2">取引回数</h6>
+                <h2 id="transactionCount" class="mb-0">-</h2>
+                <small>件</small>
+            </div>
+        </div>
+    </div>
+
+    <!-- 期間情報 -->
+    <div class="alert alert-info">
+        <i class="bi bi-info-circle"></i> 
+        <strong>期間:</strong> <span id="periodStart">-</span> 〜 <span id="periodEnd">-</span>
+    </div>
+
+    <!-- グラフエリア -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">日別使用量・補充量</h5>
+            <div class="chart-container">
+                <canvas id="usageChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">累積推移</h5>
+            <div class="chart-container">
+                <canvas id="cumulativeChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+    const materialId = {{ material.id }};
+    let usageChart, cumulativeChart;
+    let currentPeriod = '1d';
+
+    // データ取得と表示
+    async function loadStats(period) {
+        try {
+            const response = await fetch(`/api/material_stats/${materialId}`);
+            const data = await response.json();
+            const stats = data.stats[period];
+
+            // サマリー更新
+            document.getElementById('totalUsed').textContent = stats.total_used.toFixed(1);
+            document.getElementById('totalReplenished').textContent = stats.total_replenished.toFixed(1);
+            document.getElementById('netChange').textContent = stats.net_change.toFixed(1);
+            document.getElementById('transactionCount').textContent = stats.transaction_count;
+            
+            document.getElementById('periodStart').textContent = stats.start_date;
+            document.getElementById('periodEnd').textContent = stats.end_date;
+
+            // グラフ更新
+            updateCharts(stats.daily_data);
+        } catch (error) {
+            console.error('統計データの取得に失敗しました:', error);
+        }
+    }
+
+    // グラフ更新
+    function updateCharts(dailyData) {
+        const dates = Object.keys(dailyData).sort();
+        const usedData = dates.map(date => dailyData[date].used);
+        const replenishedData = dates.map(date => dailyData[date].replenished);
+
+        // 累積データを計算
+        let cumulativeUsed = 0;
+        let cumulativeReplenished = 0;
+        const cumulativeUsedData = usedData.map(val => { cumulativeUsed += val; return cumulativeUsed; });
+        const cumulativeReplenishedData = replenishedData.map(val => { cumulativeReplenished += val; return cumulativeReplenished; });
+
+        // 日別グラフ
+        if (usageChart) usageChart.destroy();
+        const ctx1 = document.getElementById('usageChart').getContext('2d');
+        usageChart = new Chart(ctx1, {
+            type: 'bar',
+            data: {
+                labels: dates.map(d => new Date(d).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })),
+                datasets: [
+                    {
+                        label: '使用量 (g)',
+                        data: usedData,
+                        backgroundColor: 'rgba(255, 99, 132, 0.7)',
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        borderWidth: 1
+                    },
+                    {
+                        label: '補充量 (g)',
+                        data: replenishedData,
+                        backgroundColor: 'rgba(75, 192, 192, 0.7)',
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    title: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        // 累積グラフ
+        if (cumulativeChart) cumulativeChart.destroy();
+        const ctx2 = document.getElementById('cumulativeChart').getContext('2d');
+        cumulativeChart = new Chart(ctx2, {
+            type: 'line',
+            data: {
+                labels: dates.map(d => new Date(d).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' })),
+                datasets: [
+                    {
+                        label: '累積使用量 (g)',
+                        data: cumulativeUsedData,
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: '累積補充量 (g)',
+                        data: cumulativeReplenishedData,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    }
+
+    // 期間ボタンのイベント
+    document.querySelectorAll('.period-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentPeriod = this.dataset.period;
+            loadStats(currentPeriod);
+        });
+    });
+
+    // 初期読み込み
+    loadStats(currentPeriod);
+</script>
+{% endblock %}
