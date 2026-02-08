@@ -5,6 +5,7 @@ from flask_wtf.csrf import CSRFProtect
 from wtforms import StringField, FloatField, SubmitField, SelectField, DateField
 from wtforms.validators import DataRequired, Email, Optional
 from datetime import datetime, date
+import sys
 import csv
 import io
 import smtplib
@@ -15,6 +16,8 @@ import os
 import json
 from pathlib import Path
 from tkinter import Tk, filedialog, messagebox
+import webbrowser
+import threading
 
 # 設定ファイルのパス
 CONFIG_FILE = 'config.json'
@@ -315,6 +318,17 @@ class RecipeItem(db.Model):
     def __repr__(self):
         return f'<RecipeItem {self.material.name} {self.quantity}>'
 
+class Tare(db.Model):
+    """風袋（容器）の管理"""
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)  # 風袋名
+    weight = db.Column(db.Float, nullable=False)  # 風袋重量（g）
+    description = db.Column(db.String(200), nullable=True)  # 説明
+    date_created = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    def __repr__(self):
+        return f'<Tare {self.name} {self.weight}g>'
+
 class MaterialForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired()])
     weight = FloatField('Weight (g)', validators=[Optional()], default=0.0)
@@ -326,6 +340,7 @@ class MaterialForm(FlaskForm):
 
 class LotForm(FlaskForm):
     lot_name = StringField('Lot Name', validators=[DataRequired()])
+    use_tare = SelectField('Use Tare', coerce=int, validators=[Optional()])
     weight = FloatField('Weight', validators=[DataRequired()])
     submit = SubmitField('Submit')
 
@@ -343,6 +358,12 @@ class RecipeForm(FlaskForm):
     name = StringField('Recipe Name', validators=[DataRequired()])
     description = StringField('Description (Optional)', validators=[Optional()])
     submit = SubmitField('Save Recipe')
+
+class TareForm(FlaskForm):
+    name = StringField('Tare Name', validators=[DataRequired()])
+    weight = FloatField('Weight (g)', validators=[DataRequired()])
+    description = StringField('Description (Optional)', validators=[Optional()])
+    submit = SubmitField('Save')
 
 @app.route('/')
 def index():
@@ -505,20 +526,32 @@ def add_lot(material_id):
     """ロット追加"""
     material = RawMaterial.query.get_or_404(material_id)
     form = LotForm()
+    
+    # 風袋の選択肢を設定
+    tares = Tare.query.order_by(Tare.name).all()
+    form.use_tare.choices = [(0, '風袋なし')] + [(t.id, f'{t.name} ({t.weight}g)') for t in tares]
+    
     if form.validate_on_submit():
-        lot = Lot(material_id=material_id, lot_name=form.lot_name.data, weight=form.weight.data)
+        # 風袋を使用する場合は、入力された重量から風袋重量を引く
+        net_weight = form.weight.data
+        if form.use_tare.data and form.use_tare.data != 0:
+            tare = Tare.query.get(form.use_tare.data)
+            if tare:
+                net_weight = form.weight.data - tare.weight
+        
+        lot = Lot(material_id=material_id, lot_name=form.lot_name.data, weight=net_weight)
         db.session.add(lot)
         db.session.flush()  # lotのIDを取得するため
         
         # 統計用に実行済み予約を作成（ロット追加は補充扱い）
-        if form.weight.data > 0:
+        if net_weight > 0:
             auto_reservation = Reservation(
                 material_id=material_id,
                 lot_id=lot.id,
                 lot_name=form.lot_name.data,
                 type='replenish',
-                quantity=form.weight.data,
-                actual_quantity=form.weight.data,
+                quantity=net_weight,
+                actual_quantity=net_weight,
                 user_name='システム',
                 purpose=f'ロット追加（{form.lot_name.data}）',
                 scheduled_date=datetime.now(),
@@ -530,16 +563,28 @@ def add_lot(material_id):
         db.session.commit()
         flash(f'ロット「{form.lot_name.data}」を追加しました', 'success')
         return redirect(url_for('lots', material_id=material_id))
-    return render_template('add_lot.html', form=form, material=material)
+    return render_template('add_lot.html', form=form, material=material, tares=tares)
 
 @app.route('/edit_lot/<int:id>', methods=['GET', 'POST'])
 def edit_lot(id):
     """ロット編集"""
     lot = Lot.query.get_or_404(id)
     form = LotForm()
+    
+    # 風袋の選択肢を設定
+    tares = Tare.query.order_by(Tare.name).all()
+    form.use_tare.choices = [(0, '風袋なし')] + [(t.id, f'{t.name} ({t.weight}g)') for t in tares]
+    
     if form.validate_on_submit():
         old_weight = lot.weight
+        
+        # 風袋を使用する場合は、入力された重量から風袋重量を引く
         new_weight = form.weight.data
+        if form.use_tare.data and form.use_tare.data != 0:
+            tare = Tare.query.get(form.use_tare.data)
+            if tare:
+                new_weight = form.weight.data - tare.weight
+        
         lot.lot_name = form.lot_name.data
         lot.weight = new_weight
         
@@ -570,7 +615,8 @@ def edit_lot(id):
     elif request.method == 'GET':
         form.lot_name.data = lot.lot_name
         form.weight.data = lot.weight
-    return render_template('edit_lot.html', form=form, lot=lot)
+        form.use_tare.data = 0
+    return render_template('edit_lot.html', form=form, lot=lot, tares=tares)
 
 @app.route('/delete_lot/<int:id>')
 def delete_lot(id):
@@ -1271,6 +1317,56 @@ def settings():
                          db_folder=current_db_folder,
                          db_path=current_db_path)
 
+@app.route('/tare_settings')
+def tare_settings():
+    """風袋設定画面"""
+    tares = Tare.query.order_by(Tare.name).all()
+    return render_template('tare_settings.html', tares=tares)
+
+@app.route('/add_tare', methods=['GET', 'POST'])
+def add_tare():
+    """風袋を追加"""
+    form = TareForm()
+    if form.validate_on_submit():
+        tare = Tare(
+            name=form.name.data,
+            weight=form.weight.data,
+            description=form.description.data
+        )
+        db.session.add(tare)
+        db.session.commit()
+        flash(f'風袋「{form.name.data}」を追加しました', 'success')
+        return redirect(url_for('tare_settings'))
+    return render_template('add_tare.html', form=form)
+
+@app.route('/edit_tare/<int:id>', methods=['GET', 'POST'])
+def edit_tare(id):
+    """風袋を編集"""
+    tare = Tare.query.get_or_404(id)
+    form = TareForm()
+    if form.validate_on_submit():
+        tare.name = form.name.data
+        tare.weight = form.weight.data
+        tare.description = form.description.data
+        db.session.commit()
+        flash(f'風袋「{tare.name}」を更新しました', 'success')
+        return redirect(url_for('tare_settings'))
+    elif request.method == 'GET':
+        form.name.data = tare.name
+        form.weight.data = tare.weight
+        form.description.data = tare.description
+    return render_template('edit_tare.html', form=form, tare=tare)
+
+@app.route('/delete_tare/<int:id>')
+def delete_tare(id):
+    """風袋を削除"""
+    tare = Tare.query.get_or_404(id)
+    tare_name = tare.name
+    db.session.delete(tare)
+    db.session.commit()
+    flash(f'風袋「{tare_name}」を削除しました', 'success')
+    return redirect(url_for('tare_settings'))
+
 @app.route('/change_database_folder', methods=['POST'])
 def change_database_folder():
     """データベースフォルダを変更"""
@@ -1301,7 +1397,18 @@ def change_database_folder():
     
     return redirect(url_for('settings'))
 
+def open_browser():
+    """ブラウザを自動的に開く"""
+    webbrowser.open('http://127.0.0.1:5000/')
+
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run(debug=True)
+    # 少し遅延してブラウザを開く
+    threading.Timer(1.5, open_browser).start()
+    
+    # 実行ファイル化されているかチェック
+    is_frozen = getattr(sys, 'frozen', False)
+    
+    # 実行ファイルではdebug=False、開発時はdebug=True
+    app.run(debug=not is_frozen, host='127.0.0.1', port=5000)

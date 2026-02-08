@@ -3,6 +3,7 @@
 {% block title %}{{ material.name }} - 統計 - 在庫管理システム{% endblock %}
 
 {% block extra_style %}
+<style>
 .period-btn {
     transition: all 0.3s ease;
 }
@@ -25,6 +26,7 @@
     height: 400px;
     margin-bottom: 30px;
 }
+</style>
 {% endblock %}
 
 {% block content %}
@@ -92,6 +94,22 @@
     <!-- グラフエリア -->
     <div class="card mb-4">
         <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="card-title mb-0">使用量・補充量トレンド</h5>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button type="button" class="btn btn-outline-secondary granularity-btn active" data-granularity="daily">日単位</button>
+                    <button type="button" class="btn btn-outline-secondary granularity-btn" data-granularity="weekly">週単位</button>
+                    <button type="button" class="btn btn-outline-secondary granularity-btn" data-granularity="monthly">月単位</button>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="trendChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
             <h5 class="card-title">日別使用量・補充量</h5>
             <div class="chart-container">
                 <canvas id="usageChart"></canvas>
@@ -114,30 +132,159 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
     const materialId = {{ material.id }};
-    let usageChart, cumulativeChart;
+    let usageChart, cumulativeChart, trendChart;
     let currentPeriod = '1d';
+    let currentGranularity = 'daily';
 
     // データ取得と表示
-    async function loadStats(period) {
+    async function loadStats(period, granularity = currentGranularity) {
         try {
-            const response = await fetch(`/api/material_stats/${materialId}`);
+            // 期間の日数を取得
+            const periodDays = {
+                '1d': 1,
+                '7d': 7,
+                '1m': 30,
+                '3m': 90,
+                '6m': 180,
+                '1y': 365
+            };
+            
+            const days = periodDays[period] || 30;
+            
+            const response = await fetch(`/api/material_stats/${materialId}?period=${days}&granularity=${granularity}`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTPエラー: ${response.status}`);
+            }
+            
             const data = await response.json();
+            
+            if (!data || !data.stats) {
+                throw new Error('統計データの形式が不正です');
+            }
+            
             const stats = data.stats[period];
+            
+            if (!stats) {
+                console.error('指定された期間の統計データがありません:', period);
+                return;
+            }
 
             // サマリー更新
-            document.getElementById('totalUsed').textContent = stats.total_used.toFixed(1);
-            document.getElementById('totalReplenished').textContent = stats.total_replenished.toFixed(1);
-            document.getElementById('netChange').textContent = stats.net_change.toFixed(1);
-            document.getElementById('transactionCount').textContent = stats.transaction_count;
+            document.getElementById('totalUsed').textContent = (stats.total_used || 0).toFixed(1);
+            document.getElementById('totalReplenished').textContent = (stats.total_replenished || 0).toFixed(1);
+            document.getElementById('netChange').textContent = (stats.net_change || 0).toFixed(1);
+            document.getElementById('transactionCount').textContent = stats.transaction_count || 0;
             
-            document.getElementById('periodStart').textContent = stats.start_date;
-            document.getElementById('periodEnd').textContent = stats.end_date;
+            document.getElementById('periodStart').textContent = stats.start_date || '-';
+            document.getElementById('periodEnd').textContent = stats.end_date || '-';
 
             // グラフ更新
-            updateCharts(stats.daily_data);
+            if (stats.daily_data) {
+                updateCharts(stats.daily_data);
+            }
+            
+            if (data.trend_data) {
+                updateTrendChart(data.trend_data);
+            } else {
+                console.warn('トレンドデータがありません');
+                updateTrendChart([]);
+            }
         } catch (error) {
             console.error('統計データの取得に失敗しました:', error);
+            alert('統計データの読み込みに失敗しました。ページを再読み込みしてください。');
         }
+    }
+
+    // トレンドグラフの更新
+    function updateTrendChart(trendData) {
+        const canvas = document.getElementById('trendChart');
+        if (!canvas) {
+            console.error('トレンドチャートのキャンバスが見つかりません');
+            return;
+        }
+        
+        if (!trendData || !Array.isArray(trendData) || trendData.length === 0) {
+            console.warn('トレンドデータが空です');
+            if (trendChart) {
+                trendChart.destroy();
+                trendChart = null;
+            }
+            // 空のメッセージを表示
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.font = '16px Arial';
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText('データがありません', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+
+        const dates = trendData.map(d => d.date || '');
+        const usedData = trendData.map(d => d.used || 0);
+        const replenishedData = trendData.map(d => d.replenished || 0);
+        const netData = trendData.map(d => d.net || 0);
+
+        if (trendChart) trendChart.destroy();
+        const ctx = canvas.getContext('2d');
+        trendChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: dates,
+                datasets: [
+                    {
+                        label: '使用量 (g)',
+                        data: usedData,
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        fill: false,
+                        tension: 0.4,
+                        borderWidth: 2
+                    },
+                    {
+                        label: '補充量 (g)',
+                        data: replenishedData,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        fill: false,
+                        tension: 0.4,
+                        borderWidth: 2
+                    },
+                    {
+                        label: '純変化量 (g)',
+                        data: netData,
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                        fill: false,
+                        tension: 0.4,
+                        borderWidth: 2,
+                        borderDash: [5, 5]
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '量 (g)'
+                        }
+                    }
+                }
+            }
+        });
     }
 
     // グラフ更新
@@ -244,11 +391,31 @@
             document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
             this.classList.add('active');
             currentPeriod = this.dataset.period;
-            loadStats(currentPeriod);
+            loadStats(currentPeriod, currentGranularity);
+        });
+    });
+
+    // 粒度ボタンのイベント
+    document.querySelectorAll('.granularity-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.granularity-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentGranularity = this.dataset.granularity;
+            loadStats(currentPeriod, currentGranularity);
         });
     });
 
     // 初期読み込み
-    loadStats(currentPeriod);
+    document.addEventListener('DOMContentLoaded', function() {
+        // Chart.jsが読み込まれているか確認
+        if (typeof Chart === 'undefined') {
+            console.error('Chart.jsが読み込まれていません');
+            alert('グラフライブラリの読み込みに失敗しました。インターネット接続を確認してください。');
+            return;
+        }
+        
+        console.log('統計データを読み込み中...');
+        loadStats(currentPeriod, currentGranularity);
+    });
 </script>
 {% endblock %}

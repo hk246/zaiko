@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}風袋管理 - 在庫管理システム{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-10">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h3><i class="bi bi-box"></i> 風袋（容器）管理</h3>
+                </div>
+                <div class="card-body">
+                    <!-- 説明 -->
+                    <div class="alert alert-info mb-4">
+                        <i class="bi bi-info-circle"></i> 
+                        <strong>風袋引き機能について</strong><br>
+                        容器の重量を登録しておくと、ロット追加・編集時に自動的に容器重量を引いた正味重量を記録できます。
+                        <ul class="mb-0 mt-2">
+                            <li>風袋名と重量を登録</li>
+                            <li>ロット追加時に風袋を選択</li>
+                            <li>容器込みの重量を入力すると、自動的に容器重量が引かれます</li>
+                        </ul>
+                    </div>
+                    
+                    <!-- 追加ボタン -->
+                    <div class="mb-4">
+                        <a href="{{ url_for('add_tare') }}" class="btn btn-primary btn-lg">
+                            <i class="bi bi-plus-circle"></i> 新規風袋を追加
+                        </a>
+                    </div>
+                    
+                    <!-- 風袋一覧 -->
+                    {% if tares %}
+                    <h5 class="border-bottom pb-2 mb-3">
+                        <i class="bi bi-list-ul"></i> 登録済み風袋一覧 ({{ tares|length }}件)
+                    </h5>
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th style="width: 30%;">風袋名</th>
+                                    <th style="width: 15%;">重量 (g)</th>
+                                    <th style="width: 35%;">説明</th>
+                                    <th style="width: 20%;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for tare in tares %}
+                                <tr>
+                                    <td>
+                                        <strong><i class="bi bi-box-seam"></i> {{ tare.name }}</strong>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-primary fs-6">{{ "%.2f"|format(tare.weight) }} g</span>
+                                    </td>
+                                    <td>
+                                        <small class="text-muted">{{ tare.description or '-' }}</small>
+                                    </td>
+                                    <td>
+                                        <div class="btn-group" role="group">
+                                            <a href="{{ url_for('edit_tare', id=tare.id) }}" 
+                                               class="btn btn-sm btn-warning"
+                                               title="編集">
+                                                <i class="bi bi-pencil-square"></i> 編集
+                                            </a>
+                                            <a href="{{ url_for('delete_tare', id=tare.id) }}" 
+                                               class="btn btn-sm btn-danger"
+                                               onclick="return confirm('風袋「{{ tare.name }}」を削除してもよろしいですか？\n\n※ 既存のロットには影響しませんが、今後この風袋は選択できなくなります。');"
+                                               title="削除">
+                                                <i class="bi bi-trash"></i> 削除
+                                            </a>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle"></i> 
+                        <strong>風袋が登録されていません</strong><br>
+                        「新規風袋を追加」ボタンから最初の風袋を登録してください。
+                    </div>
+                    {% endif %}
+                    
+                    <!-- 使用例 -->
+                    <div class="card mt-4 bg-light">
+                        <div class="card-body">
+                            <h6 class="card-title"><i class="bi bi-lightbulb"></i> 使用例</h6>
+                            <ol class="mb-0">
+                                <li class="mb-2">
+                                    風袋を登録（例: ビーカー500ml、重量: 120g）
+                                </li>
+                                <li class="mb-2">
+                                    ロット追加ページで「風袋モード」から登録した風袋を選択
+                                </li>
+                                <li class="mb-2">
+                                    容器込みの計量値を入力（例: 350g）
+                                </li>
+                                <li>
+                                    自動的に風袋重量が引かれた正味重量が記録されます（350g - 120g = 230g）
+                                </li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer text-end">
+                    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+                        <i class="bi bi-arrow-left"></i> ダッシュボードに戻る
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

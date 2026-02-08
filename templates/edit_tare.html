@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}風袋編集 - 在庫管理システム{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-header bg-warning">
+                    <h3><i class="bi bi-pencil-square"></i> 風袋を編集: {{ tare.name }}</h3>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        {{ form.hidden_tag() }}
+                        
+                        <div class="mb-3">
+                            {{ form.name.label(class="form-label") }}
+                            {{ form.name(class="form-control", required=True) }}
+                            <small class="form-text text-muted">容器の名前や種類</small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            {{ form.weight.label(class="form-label") }}
+                            <div class="input-group">
+                                {{ form.weight(class="form-control", step="0.01", required=True) }}
+                                <span class="input-group-text">g</span>
+                            </div>
+                            <small class="form-text text-muted">風袋（容器）の重量をグラム単位で入力</small>
+                        </div>
+                        
+                        <div class="mb-3">
+                            {{ form.description.label(class="form-label") }}
+                            {{ form.description(class="form-control") }}
+                            <small class="form-text text-muted">容器の詳細情報（任意）</small>
+                        </div>
+                        
+                        <div class="alert alert-secondary">
+                            <strong>作成日:</strong> {{ tare.date_created.strftime('%Y/%m/%d %H:%M') if tare.date_created else 'N/A' }}
+                        </div>
+                        
+                        <div class="d-flex gap-2">
+                            {{ form.submit(class="btn btn-primary") }}
+                            <a href="{{ url_for('tare_settings') }}" class="btn btn-secondary">キャンセル</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

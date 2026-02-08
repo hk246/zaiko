@@ -1,41 +1,91 @@
 {% extends "base.html" %}
 
-{% block title %}{% if action == 'use' %}使用予約{% else %}補充予約{% endif %} - 在庫管理システム{% endblock %}
-
 {% block content %}
-    <h1 class="mb-4">{{ material.name }} の {% if action == 'use' %}使用予約{% else %}補充予約{% endif %}</h1>
-    <form method="POST" class="w-50">
+<div class="container mt-4">
+    <h2>{{ material.name }} - {% if action == 'use' %}使用予約{% else %}補充予約{% endif %}</h2>
+    
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">現在の在庫情報</h5>
+            <ul class="list-group list-group-flush">
+                <li class="list-group-item">
+                    <strong>現在量:</strong> {{ "%.2f"|format(material.get_total_lot_weight()) }} {{ material.unit }}
+                </li>
+                <li class="list-group-item">
+                    <strong>予測在庫量:</strong> {{ "%.2f"|format(material.get_predicted_stock()) }} {{ material.unit }}
+                </li>
+                <li class="list-group-item">
+                    <strong>最低量:</strong> {{ material.min_weight }} {{ material.unit }}
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <form method="POST">
         {{ form.hidden_tag() }}
+        
         <div class="mb-3">
-            {{ form.lot_id.label(class="form-label") }}
-            {{ form.lot_id(class="form-select") }}
-            <small class="form-text text-muted">既存のロットから選択する場合</small>
+            <label for="quantity" class="form-label">数量 ({{ material.unit }})</label>
+            {{ form.quantity(class="form-control", id="quantity", step="0.01", required=True) }}
         </div>
+
+        {% if action == 'use' %}
         <div class="mb-3">
-            {{ form.lot_name.label(class="form-label") }}
-            {{ form.lot_name(class="form-control", placeholder="例: 2026-02-A") }}
-            <small class="form-text text-muted">新しいロット名を入力する場合（補充時に新規作成、使用時は既存ロットから検索）</small>
+            <label for="lot_id" class="form-label">ロット選択</label>
+            {{ form.lot_id(class="form-select", id="lot_id") }}
+            <div class="form-text">既存のロットから使用する場合は選択してください</div>
         </div>
+        {% endif %}
+
+        {% if action == 'replenish' %}
         <div class="mb-3">
-            {{ form.quantity.label(class="form-label") }}
-            {{ form.quantity(class="form-control", step="0.001") }}
-            <small class="form-text text-muted">単位: {{ material.unit }}</small>
+            <label for="lot_name" class="form-label">ロット名（新規または既存）</label>
+            {{ form.lot_name(class="form-control", id="lot_name") }}
+            <div class="form-text">新規ロットの名前を入力するか、既存ロット名を入力してください</div>
         </div>
+        {% endif %}
+
         <div class="mb-3">
-            {{ form.user_name.label(class="form-label") }}
-            {{ form.user_name(class="form-control", placeholder="例: 山田太郎") }}
-            <small class="form-text text-muted">使用者名（任意）</small>
+            <label for="user_name" class="form-label">使用者名（任意）</label>
+            {{ form.user_name(class="form-control", id="user_name") }}
         </div>
+
         <div class="mb-3">
-            {{ form.purpose.label(class="form-label") }}
-            {{ form.purpose(class="form-control", placeholder="例: 試作品A") }}
-            <small class="form-text text-muted">使用目的（任意）</small>
+            <label for="purpose" class="form-label">目的（任意）</label>
+            {{ form.purpose(class="form-control", id="purpose") }}
         </div>
+
         <div class="mb-3">
-            {{ form.scheduled_date.label(class="form-label") }}
-            {{ form.scheduled_date(class="form-control", type="date") }}
-            <small class="form-text text-muted">{% if action == 'use' %}使用予定日{% else %}補充予定日{% endif %}を入力（この日を過ぎると実行を促されます）</small>
+            <label for="scheduled_date" class="form-label">予定日（任意）</label>
+            {{ form.scheduled_date(class="form-control", id="scheduled_date", type="date") }}
         </div>
-        {{ form.submit(class="btn btn-primary") }}
+
+        <div class="d-flex gap-2">
+            {{ form.submit(class="btn btn-primary") }}
+            <a href="{{ url_for('index') }}" class="btn btn-secondary">キャンセル</a>
+        </div>
     </form>
+</div>
+
+<script>
+// 数量入力時に予測在庫を更新
+document.getElementById('quantity').addEventListener('input', function() {
+    const quantity = parseFloat(this.value) || 0;
+    const action = '{{ action }}';
+    const currentStock = {{ material.get_predicted_stock() }};
+    const minWeight = {{ material.min_weight }};
+    
+    let predictedStock;
+    if (action === 'use') {
+        predictedStock = currentStock - quantity;
+    } else {
+        predictedStock = currentStock + quantity;
+    }
+    
+    // 警告表示（必要に応じて追加）
+    if (action === 'use' && predictedStock < minWeight) {
+        console.warn('予測在庫が最低量を下回ります');
+    }
+});
+</script>
 {% endblock %}
