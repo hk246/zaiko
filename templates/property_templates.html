@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block title %}物性値テンプレート - 在庫管理システム{% endblock %}
+{% block page_title %}物性値テンプレート{% endblock %}
+
+{% block content %}
+<div class="mb-3" style="font-size:0.85rem;color:var(--text-secondary);">
+    <i class="bi bi-info-circle me-1"></i>
+    各ラベル（カテゴリ）に対して物性値のフィールドを定義できます。フィールドを設定すると、ロット一覧の「物性値」ボタンから値を入力・管理できます。
+</div>
+
+<!-- ラベルごとのフィールド一覧 -->
+{% set all_sections = labels + [none] %}
+{% for lbl in labels %}
+{% set lbl_fields = lbl.property_fields %}
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span>
+            <span class="badge me-2" style="background-color:{{ lbl.color }};font-size:0.85rem;">
+                <i class="bi bi-tag-fill me-1"></i>{{ lbl.name }}
+            </span>
+            <span class="text-secondary" style="font-size:0.82rem;">{{ lbl_fields|length }} フィールド</span>
+        </span>
+        <button class="btn btn-primary btn-sm"
+                data-bs-toggle="modal"
+                data-bs-target="#addFieldModal"
+                data-label-id="{{ lbl.id }}"
+                data-label-name="{{ lbl.name }}">
+            <i class="bi bi-plus-lg"></i> フィールド追加
+        </button>
+    </div>
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th style="width:50px;">#</th>
+                    <th>フィールド名</th>
+                    <th>型</th>
+                    <th>単位</th>
+                    <th style="min-width:120px;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for f in lbl_fields %}
+                <tr>
+                    <td class="text-secondary" style="font-size:0.82rem;">{{ f.order_index }}</td>
+                    <td><strong>{{ f.name }}</strong></td>
+                    <td>
+                        {% if f.field_type == 'number' %}
+                        <span class="badge bg-info text-dark">数値</span>
+                        {% elif f.field_type == 'date' %}
+                        <span class="badge bg-success">日付</span>
+                        {% else %}
+                        <span class="badge bg-secondary">文字列</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if f.unit %}<code>{{ f.unit }}</code>{% else %}<span class="text-secondary">—</span>{% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex gap-1">
+                            <a href="{{ url_for('edit_property_field', id=f.id) }}"
+                               class="btn btn-outline-secondary btn-sm">
+                                <i class="bi bi-pencil"></i> 編集
+                            </a>
+                            <form method="POST" action="{{ url_for('delete_property_field', id=f.id) }}"
+                                  style="display:inline;"
+                                  onsubmit="return confirm('フィールド「{{ f.name }}」を削除しますか？\n関連するすべての物性値データも削除されます。');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-outline-danger btn-sm">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" style="text-align:center;padding:24px;color:var(--text-secondary);font-size:0.85rem;">
+                        <i class="bi bi-table me-1"></i>フィールドがありません。「フィールド追加」から追加してください。
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+
+<!-- ラベルなしセクション -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span>
+            <span class="badge bg-secondary me-2" style="font-size:0.85rem;">
+                <i class="bi bi-tag me-1"></i>ラベルなし
+            </span>
+            <span class="text-secondary" style="font-size:0.82rem;">{{ unlabeled_fields|length }} フィールド</span>
+        </span>
+        <button class="btn btn-primary btn-sm"
+                data-bs-toggle="modal"
+                data-bs-target="#addFieldModal"
+                data-label-id=""
+                data-label-name="ラベルなし">
+            <i class="bi bi-plus-lg"></i> フィールド追加
+        </button>
+    </div>
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th style="width:50px;">#</th>
+                    <th>フィールド名</th>
+                    <th>型</th>
+                    <th>単位</th>
+                    <th style="min-width:120px;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for f in unlabeled_fields %}
+                <tr>
+                    <td class="text-secondary" style="font-size:0.82rem;">{{ f.order_index }}</td>
+                    <td><strong>{{ f.name }}</strong></td>
+                    <td>
+                        {% if f.field_type == 'number' %}
+                        <span class="badge bg-info text-dark">数値</span>
+                        {% elif f.field_type == 'date' %}
+                        <span class="badge bg-success">日付</span>
+                        {% else %}
+                        <span class="badge bg-secondary">文字列</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if f.unit %}<code>{{ f.unit }}</code>{% else %}<span class="text-secondary">—</span>{% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex gap-1">
+                            <a href="{{ url_for('edit_property_field', id=f.id) }}"
+                               class="btn btn-outline-secondary btn-sm">
+                                <i class="bi bi-pencil"></i> 編集
+                            </a>
+                            <form method="POST" action="{{ url_for('delete_property_field', id=f.id) }}"
+                                  style="display:inline;"
+                                  onsubmit="return confirm('フィールド「{{ f.name }}」を削除しますか？\n関連するすべての物性値データも削除されます。');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-outline-danger btn-sm">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" style="text-align:center;padding:24px;color:var(--text-secondary);font-size:0.85rem;">
+                        <i class="bi bi-table me-1"></i>フィールドがありません。「フィールド追加」から追加してください。
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% if not labels %}
+<div class="card">
+    <div class="card-body" style="text-align:center;padding:40px;color:var(--text-secondary);">
+        <i class="bi bi-tags" style="font-size:2.5rem;display:block;margin-bottom:10px;opacity:0.2;"></i>
+        <div>ラベルが登録されていません。</div>
+        <div style="font-size:0.85rem;margin-top:6px;">
+            <a href="{{ url_for('labels') }}" class="text-primary">ラベル管理</a> でラベルを追加すると、ラベルごとにフィールドを設定できます。
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- フィールド追加モーダル -->
+<div class="modal fade" id="addFieldModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-plus-circle me-2 text-primary"></i>フィールド追加
+                    <small class="text-secondary ms-2" id="modalLabelName"></small>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('add_property_field') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="label_id" id="modalLabelId">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">フィールド名 <span class="text-danger">*</span></label>
+                        <input type="text" name="name" class="form-control" required
+                               placeholder="例: 沸点、密度、外観、純度">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">型</label>
+                        <select name="field_type" class="form-select">
+                            <option value="string">文字列（テキスト）</option>
+                            <option value="number">数値</option>
+                            <option value="date">日付（カレンダー）</option>
+                        </select>
+                        <div class="form-text">数値型は数値キーボード、日付型はカレンダー選択が表示されます</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">単位（任意）</label>
+                        <input type="text" name="unit" class="form-control"
+                               placeholder="例: °C, g/mL, %, nm">
+                        <div class="form-text">入力欄に単位ラベルとして表示されます</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-circle me-1"></i>追加
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// モーダル表示時にラベル情報をセット
+document.getElementById('addFieldModal').addEventListener('show.bs.modal', function(event) {
+    const btn = event.relatedTarget;
+    const labelId   = btn.getAttribute('data-label-id');
+    const labelName = btn.getAttribute('data-label-name');
+    document.getElementById('modalLabelId').value  = labelId;
+    document.getElementById('modalLabelName').textContent = labelName ? `(${labelName})` : '';
+});
+</script>
+{% endblock %}

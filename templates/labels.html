@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}ラベル管理 - 在庫管理システム{% endblock %}
+{% block page_title %}ラベル管理{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addLabelModal">
+    <i class="bi bi-plus-lg"></i> 新規ラベル追加
+</button>
+{% endblock %}
+
+{% block content %}
+<!-- 新規ラベル追加モーダル -->
+<div class="modal fade" id="addLabelModal" tabindex="-1" aria-labelledby="addLabelModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="addLabelModalLabel">
+                    <i class="bi bi-tag-fill me-2 text-primary"></i>新規ラベル追加
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="{{ url_for('add_label') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">ラベル名 <span class="text-danger">*</span></label>
+                        <input type="text" name="name" class="form-control" required
+                               placeholder="例: 化学薬品、溶媒、添加剤">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">カラー</label>
+                        <div class="d-flex align-items-center gap-3">
+                            <input type="color" name="color" id="colorPickerAdd"
+                                   class="form-control form-control-color"
+                                   value="#2563eb" style="width:60px;height:38px;">
+                            <span id="colorPreviewAdd" class="badge"
+                                  style="background-color:#2563eb;font-size:0.85rem;padding:6px 12px;">
+                                プレビュー
+                            </span>
+                        </div>
+                        <div class="form-text">ラベルの表示色を選択してください</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-circle me-1"></i>追加
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ラベル一覧 -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-tags-fill me-2 text-primary"></i>登録済みラベル</span>
+        <span class="badge bg-secondary">{{ labels|length }}件</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th>ラベル</th>
+                    <th>カラー</th>
+                    <th>使用中の原料数</th>
+                    <th style="min-width:140px;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for lbl in labels %}
+                <tr>
+                    <td>
+                        <span class="badge" style="background-color:{{ lbl.color }};font-size:0.9rem;padding:6px 12px;">
+                            <i class="bi bi-tag-fill me-1"></i>{{ lbl.name }}
+                        </span>
+                    </td>
+                    <td>
+                        <div class="d-flex align-items-center gap-2">
+                            <span style="display:inline-block;width:22px;height:22px;border-radius:5px;
+                                         background:{{ lbl.color }};border:1px solid #e2e8f0;flex-shrink:0;"></span>
+                            <code style="font-size:0.8rem;">{{ lbl.color }}</code>
+                        </div>
+                    </td>
+                    <td>
+                        {% if lbl.materials|length > 0 %}
+                        <a href="{{ url_for('index', label_id=lbl.id) }}"
+                           class="text-decoration-none">
+                            <strong>{{ lbl.materials|length }}</strong>
+                            <span class="text-secondary" style="font-size:0.82rem;"> 件</span>
+                        </a>
+                        {% else %}
+                        <span class="text-secondary" style="font-size:0.82rem;">0 件</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex gap-1">
+                            <a href="{{ url_for('edit_label', id=lbl.id) }}"
+                               class="btn btn-outline-secondary btn-sm" title="編集">
+                                <i class="bi bi-pencil"></i> 編集
+                            </a>
+                            <form method="POST" action="{{ url_for('delete_label', id=lbl.id) }}"
+                                  style="display:inline;"
+                                  onsubmit="return confirm('ラベル「{{ lbl.name }}」を削除しますか？\n関連する原料のラベルが解除されます。');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-outline-danger btn-sm" title="削除">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" style="text-align:center;padding:48px;color:var(--text-secondary);">
+                        <i class="bi bi-tags" style="font-size:2.5rem;display:block;margin-bottom:10px;opacity:0.2;"></i>
+                        ラベルが登録されていません。右上の「新規ラベル追加」から追加してください。
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="mt-3" style="font-size:0.82rem;color:var(--text-secondary);">
+    <i class="bi bi-info-circle me-1"></i>
+    ラベルを設定すると、原料一覧やダッシュボードでラベルごとにフィルタして表示できます。
+    原料への設定は<a href="{{ url_for('index') }}" class="text-primary">原料一覧</a>の編集画面から行えます。
+</div>
+
+<script>
+// カラーピッカーのプレビュー更新
+document.getElementById('colorPickerAdd').addEventListener('input', function() {
+    document.getElementById('colorPreviewAdd').style.backgroundColor = this.value;
+});
+</script>
+{% endblock %}

@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+
+{% block title %}作業一覧 - 在庫管理システム{% endblock %}
+{% block page_title %}作業一覧{% endblock %}
+
+{% block topbar_actions %}
+<a href="{{ url_for('add_work_order') }}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-lg"></i> 新規作業追加
+</a>
+<a href="{{ url_for('work_order_dashboard') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-bar-chart-line"></i> 進捗ダッシュボード
+</a>
+{% endblock %}
+
+{% block extra_style %}
+.priority-critical { border-left: 3px solid #dc2626; }
+.priority-high     { border-left: 3px solid #d97706; }
+.priority-low      { border-left: 3px solid #2563eb; }
+.priority-none     { border-left: 3px solid #e2e8f0; }
+
+.status-badge-pending     { background:#f1f5f9; color:#64748b; }
+.status-badge-in_progress { background:#eff6ff; color:#2563eb; }
+.status-badge-completed   { background:#f0fdf4; color:#16a34a; }
+
+.priority-badge-critical { background:#fef2f2; color:#dc2626; }
+.priority-badge-high     { background:#fffbeb; color:#d97706; }
+.priority-badge-low      { background:#eff6ff; color:#2563eb; }
+.priority-badge-none     { background:#f8fafc; color:#94a3b8; }
+
+.overdue-row { background: #fff8f8 !important; }
+.overdue-row:hover td { background: #fff0f0 !important; }
+
+.filter-bar {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 16px;
+}
+
+.wo-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 10px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    transition: box-shadow 0.15s;
+}
+.wo-card:hover { box-shadow: var(--shadow-md); }
+
+.wo-card-status-col { flex-shrink: 0; width: 100px; }
+.wo-card-main       { flex: 1; min-width: 0; }
+.wo-card-actions    { flex-shrink: 0; display: flex; gap: 6px; align-items: center; }
+
+.wo-process-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wo-meta {
+    font-size: 0.775rem;
+    color: var(--text-secondary);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.wo-meta span { display: flex; align-items: center; gap: 4px; }
+{% endblock %}
+
+{% block content %}
+<!-- フィルターバー -->
+<div class="filter-bar">
+    <form method="GET" class="row g-2 align-items-end">
+        <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label">ステータス</label>
+            <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="">すべて</option>
+                <option value="pending"     {% if request.args.get('status')=='pending'     %}selected{% endif %}>取り掛かり前</option>
+                <option value="in_progress" {% if request.args.get('status')=='in_progress' %}selected{% endif %}>作業中</option>
+                <option value="completed"   {% if request.args.get('status')=='completed'   %}selected{% endif %}>完了</option>
+            </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-3">
+            <label class="form-label">優先度</label>
+            <select name="priority" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="">すべて</option>
+                <option value="critical" {% if request.args.get('priority')=='critical' %}selected{% endif %}>最優先</option>
+                <option value="high"     {% if request.args.get('priority')=='high'     %}selected{% endif %}>優先大</option>
+                <option value="low"      {% if request.args.get('priority')=='low'      %}selected{% endif %}>優先小</option>
+                <option value="none"     {% if request.args.get('priority')=='none'     %}selected{% endif %}>未入力</option>
+            </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-2">
+            <label class="form-label">実験種</label>
+            <select name="type" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="">すべて</option>
+                <option value="standard"   {% if request.args.get('type')=='standard'   %}selected{% endif %}>標準</option>
+                <option value="experiment" {% if request.args.get('type')=='experiment' %}selected{% endif %}>実験</option>
+            </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-2">
+            <label class="form-label">アーカイブ</label>
+            <select name="archived" class="form-select form-select-sm" onchange="this.form.submit()">
+                <option value="0" {% if request.args.get('archived','0')=='0' %}selected{% endif %}>非表示</option>
+                <option value="1" {% if request.args.get('archived')=='1'     %}selected{% endif %}>表示</option>
+            </select>
+        </div>
+        <div class="col-12 col-md-2">
+            <label class="form-label">検索</label>
+            <div class="input-group input-group-sm">
+                <input type="text" name="search" class="form-control"
+                       placeholder="工程名・ロット名"
+                       value="{{ request.args.get('search','') }}">
+                <button class="btn btn-outline-secondary" type="submit">
+                    <i class="bi bi-search"></i>
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- 件数サマリー + 一括アーカイブ -->
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div class="text-secondary" style="font-size:0.85rem;">
+        <strong class="text-primary">{{ work_orders|length }}</strong> 件
+        {% if request.args.get('archived')=='1' %}
+        <span class="badge bg-secondary ms-2">アーカイブ表示中</span>
+        {% endif %}
+        <span class="ms-3 text-muted" style="font-size:0.78rem;">
+            <i class="bi bi-info-circle me-1"></i>ステータスは実際の開始日・完了日から自動更新されます
+        </span>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+        {% if request.args %}
+        <a href="{{ url_for('work_orders') }}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-x-circle"></i> フィルター解除
+        </a>
+        {% endif %}
+        {% if not request.args.get('archived') == '1' %}
+        <form method="POST" action="{{ url_for('archive_completed_work_orders') }}"
+              onsubmit="return confirm('完了済みの作業をすべてアーカイブします。よろしいですか？');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm btn-warning">
+                <i class="bi bi-archive-fill me-1"></i>完了済みを一括アーカイブ
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<!-- 作業一覧 -->
+{% if work_orders %}
+{% for wo in work_orders %}
+<div class="wo-card priority-{{ wo.priority }}{% if wo.is_overdue() %} overdue-row{% endif %}">
+    <!-- ステータスバッジ（自動判定・読み取り専用） -->
+    <div class="wo-card-status-col">
+        {% if wo.status == 'completed' %}
+        <span class="badge status-badge-completed" style="font-size:0.78rem;font-weight:600;padding:5px 8px;">
+            <i class="bi bi-check-circle-fill me-1"></i>完了
+        </span>
+        {% elif wo.status == 'in_progress' %}
+        <span class="badge status-badge-in_progress" style="font-size:0.78rem;font-weight:600;padding:5px 8px;">
+            <i class="bi bi-play-circle-fill me-1"></i>作業中
+        </span>
+        {% else %}
+        <span class="badge status-badge-pending" style="font-size:0.78rem;font-weight:600;padding:5px 8px;">
+            <i class="bi bi-clock me-1"></i>取り掛かり前
+        </span>
+        {% endif %}
+    </div>
+
+    <!-- メイン情報 -->
+    <div class="wo-card-main">
+        <div class="wo-process-name">
+            {% if wo.archived %}
+            <span class="badge bg-secondary me-1" style="font-size:0.65rem;">Archive</span>
+            {% endif %}
+            {% if wo.is_overdue() %}
+            <span class="badge bg-danger me-1" style="font-size:0.65rem;">期限超過</span>
+            {% endif %}
+            {{ wo.process_name }}
+        </div>
+        <div class="wo-meta">
+            {% if wo.worker_name %}
+            <span><i class="bi bi-person-fill"></i> {{ wo.worker_name }}</span>
+            {% endif %}
+            {% if wo.lot_name %}
+            <span><i class="bi bi-box"></i> ロット: {{ wo.lot_name }}</span>
+            {% endif %}
+            {% if wo.material %}
+            <span><i class="bi bi-flask"></i> {{ wo.material.name }}</span>
+            {% endif %}
+            <span>
+                <i class="bi bi-flag"></i>
+                <span class="badge priority-badge-{{ wo.priority }}" style="font-size:0.68rem;">{{ wo.priority_label() }}</span>
+            </span>
+            {% if wo.experiment_type == 'experiment' %}
+            <span><span class="badge" style="background:#f5f3ff;color:#7c3aed;font-size:0.68rem;">実験</span></span>
+            {% endif %}
+            {% if wo.invoice_issued %}
+            <span><span class="badge" style="background:#f0fdf4;color:#16a34a;font-size:0.68rem;"><i class="bi bi-check2"></i> 伝票発行済</span></span>
+            {% endif %}
+            <!-- 実績日 -->
+            {% if wo.actual_start %}
+            <span style="color:#2563eb;"><i class="bi bi-play-fill"></i> 開始: {{ wo.actual_start.strftime('%m/%d') }}</span>
+            {% endif %}
+            {% if wo.actual_end %}
+            <span style="color:#16a34a;"><i class="bi bi-check-lg"></i> 完了: {{ wo.actual_end.strftime('%m/%d') }}</span>
+            {% endif %}
+            <!-- 予定日 -->
+            {% if wo.planned_end %}
+            <span class="text-muted"><i class="bi bi-calendar-event"></i> 完了予定: {{ wo.planned_end.strftime('%m/%d') }}</span>
+            {% endif %}
+            {% if wo.planned_start and not wo.actual_start %}
+            <span class="text-muted"><i class="bi bi-calendar"></i> 開始予定: {{ wo.planned_start.strftime('%m/%d') }}</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- アクション -->
+    <div class="wo-card-actions">
+        <a href="{{ url_for('edit_work_order', id=wo.id) }}"
+           class="btn btn-outline-secondary btn-sm" title="編集">
+            <i class="bi bi-pencil"></i>
+        </a>
+        {% if wo.archived %}
+        <form method="POST" action="{{ url_for('unarchive_work_order', id=wo.id) }}" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-success btn-sm" title="アーカイブ解除">
+                <i class="bi bi-arrow-counterclockwise"></i>
+            </button>
+        </form>
+        {% else %}
+        <form method="POST" action="{{ url_for('archive_work_order', id=wo.id) }}" style="display:inline;"
+              onsubmit="return confirm('「{{ wo.process_name }}」をアーカイブしますか？');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-warning btn-sm" title="アーカイブ">
+                <i class="bi bi-archive"></i>
+            </button>
+        </form>
+        {% endif %}
+        <form method="POST" action="{{ url_for('delete_work_order', id=wo.id) }}" style="display:inline;"
+              onsubmit="return confirm('「{{ wo.process_name }}」を削除しますか？この操作は元に戻せません。');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-danger btn-sm" title="削除">
+                <i class="bi bi-trash"></i>
+            </button>
+        </form>
+    </div>
+</div>
+{% endfor %}
+
+{% else %}
+<div class="card">
+    <div class="card-body text-center py-5" style="color:var(--text-secondary);">
+        <i class="bi bi-kanban" style="font-size:3rem;opacity:0.2;display:block;margin-bottom:12px;"></i>
+        <p style="font-size:0.95rem;">作業がありません</p>
+        <a href="{{ url_for('add_work_order') }}" class="btn btn-primary btn-sm mt-2">
+            <i class="bi bi-plus-lg"></i> 最初の作業を追加
+        </a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function updateStatus(id, status, el) {
+    const classes = {
+        'pending':     'status-badge-pending',
+        'in_progress': 'status-badge-in_progress',
+        'completed':   'status-badge-completed'
+    };
+    // ビジュアル即時反映
+    el.className = el.className.replace(/status-badge-\w+/, '');
+    el.classList.add(classes[status] || '');
+
+    fetch(`/work_orders/update_status/${id}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token() }}'},
+        body: JSON.stringify({status: status})
+    }).then(r => r.json()).then(data => {
+        if (!data.success) {
+            alert('ステータスの更新に失敗しました。');
+            location.reload();
+        }
+    }).catch(() => {
+        alert('通信エラーが発生しました。');
+        location.reload();
+    });
+}
+</script>
+{% endblock %}

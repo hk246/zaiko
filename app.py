@@ -18,9 +18,30 @@ from pathlib import Path
 from tkinter import Tk, filedialog, messagebox
 import webbrowser
 import threading
+import subprocess
+import platform
 
-# 設定ファイルのパス
-CONFIG_FILE = 'config.json'
+# ======================================================
+# 実行ファイル化（Nuitka/PyInstaller）対応: ベースディレクトリ解決
+# ======================================================
+def _get_base_dir():
+    """実行環境に応じてアプリのベースディレクトリを返す"""
+    # PyInstaller onefile/standalone
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.realpath(sys.executable))
+    # Nuitka standalone / onefile
+    try:
+        _ = __compiled__   # Nuitka コンパイル時にのみ定義される
+        return os.path.dirname(os.path.realpath(sys.executable))
+    except NameError:
+        pass
+    # 通常の Python 実行
+    return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = _get_base_dir()
+
+# 設定ファイルのパス（常に実行ファイルと同じディレクトリ）
+CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
 
 def load_config():
     """設定ファイルを読み込む"""
@@ -45,7 +66,7 @@ def select_database_folder():
     
     folder = filedialog.askdirectory(
         title='データベースフォルダを選択してください',
-        initialdir=os.getcwd()
+        initialdir=BASE_DIR
     )
     
     root.destroy()
@@ -75,7 +96,7 @@ def get_database_path():
         
         if not db_folder:
             messagebox.showerror('エラー', 'フォルダが選択されませんでした。\nデフォルトのinstanceフォルダを使用します。')
-            db_folder = os.path.join(os.getcwd(), 'instance')
+            db_folder = os.path.join(BASE_DIR, 'instance')
             os.makedirs(db_folder, exist_ok=True)
         
         # 設定を保存
@@ -87,7 +108,12 @@ def get_database_path():
     return db_path
 
 # Flaskアプリケーションの初期化
-app = Flask(__name__)
+# template_folder/static_folderを絶対パスで指定（実行ファイル化対応）
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, 'templates'),
+    static_folder=os.path.join(BASE_DIR, 'static'),
+)
 app.config['SECRET_KEY'] = 'your-secret-key'
 
 # データベースパスを取得
@@ -96,6 +122,18 @@ app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
 
 db = SQLAlchemy(app)
 csrf = CSRFProtect(app)
+
+class MaterialLabel(db.Model):
+    """原料ラベル（カテゴリ）"""
+    __tablename__ = 'material_label'
+    id           = db.Column(db.Integer, primary_key=True)
+    name         = db.Column(db.String(50), nullable=False, unique=True)
+    color        = db.Column(db.String(7), nullable=False, default='#6c757d')
+    date_created = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    def __repr__(self):
+        return f'<MaterialLabel {self.name}>'
+
 
 class RawMaterial(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -106,10 +144,16 @@ class RawMaterial(db.Model):
     email = db.Column(db.String(120), nullable=True)  # 購入担当者メール
     excel_path = db.Column(db.String(500), nullable=True)  # エクセルファイルパス
     action_type = db.Column(db.String(20), default='none')  # 'email', 'excel', 'none'
+    label_id = db.Column(db.Integer, db.ForeignKey('material_label.id'), nullable=True)
+    label    = db.relationship('MaterialLabel', backref=db.backref('materials', lazy=True))
 
     def get_total_lot_weight(self):
-        """全ロットの現在重量の合計"""
-        return sum(lot.weight for lot in self.lots)
+        """全ロットの現在重量の合計（端数を除く）"""
+        return sum(lot.weight for lot in self.lots if not getattr(lot, 'is_fraction', False))
+    
+    def get_fraction_lot_weight(self):
+        """端数ロットの重量合計"""
+        return sum(lot.weight for lot in self.lots if getattr(lot, 'is_fraction', False))
     
     def get_predicted_stock(self):
         """現在量 + 未実行の補充予約 - 未実行の使用予約 = 予測在庫量（ロットの合計）"""
@@ -257,6 +301,7 @@ class Lot(db.Model):
     material_id = db.Column(db.Integer, db.ForeignKey('raw_material.id'), nullable=False)
     lot_name = db.Column(db.String(100), nullable=False)  # ロット名
     weight = db.Column(db.Float, nullable=False)  # ロットの重量
+    is_fraction = db.Column(db.Boolean, default=False)  # 端数処理フラグ
     date_created = db.Column(db.DateTime, default=db.func.current_timestamp())
 
     material = db.relationship('RawMaterial', backref=db.backref('lots', lazy=True, cascade='all, delete-orphan'))
@@ -292,6 +337,20 @@ class Reservation(db.Model):
 
     def __repr__(self):
         return f'<Reservation {self.type} {self.quantity}>'
+
+class ReservationUsage(db.Model):
+    """予約実行時の複数ロット使用記録"""
+    id = db.Column(db.Integer, primary_key=True)
+    reservation_id = db.Column(db.Integer, db.ForeignKey('reservation.id'), nullable=False)
+    lot_id = db.Column(db.Integer, db.ForeignKey('lot.id'), nullable=False)
+    quantity = db.Column(db.Float, nullable=False)  # このロットから使用した量
+    date_created = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    reservation = db.relationship('Reservation', backref=db.backref('usages', lazy=True, cascade='all, delete-orphan'))
+    lot = db.relationship('Lot', backref=db.backref('usages', lazy=True))
+
+    def __repr__(self):
+        return f'<ReservationUsage reservation={self.reservation_id} lot={self.lot_id} quantity={self.quantity}>'
 
 class Recipe(db.Model):
     """複数原料の組み合わせ（レシピ）"""
@@ -329,6 +388,131 @@ class Tare(db.Model):
     def __repr__(self):
         return f'<Tare {self.name} {self.weight}g>'
 
+class Contact(db.Model):
+    """連絡先（アドレス帳）"""
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)  # 名前
+    email = db.Column(db.String(120), nullable=False)  # メールアドレス
+    description = db.Column(db.String(200), nullable=True)  # 備考
+    date_created = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    def __repr__(self):
+        return f'<Contact {self.name} {self.email}>'
+
+class WorkOrder(db.Model):
+    """作業工程進捗管理"""
+    id = db.Column(db.Integer, primary_key=True)
+    process_name = db.Column(db.String(200), nullable=False)       # 作業工程名
+    lot_name = db.Column(db.String(100), nullable=True)            # 製造ロット名
+    material_id = db.Column(db.Integer, db.ForeignKey('raw_material.id'), nullable=True)  # 関連原料（任意）
+    status = db.Column(db.String(20), default='pending')           # pending / in_progress / completed
+    priority = db.Column(db.String(20), default='none')            # critical / high / low / none
+    invoice_issued = db.Column(db.Boolean, default=False)          # 伝票発行済
+    worker_name = db.Column(db.String(100), nullable=True)          # 作業者名
+    experiment_type = db.Column(db.String(20), default='standard') # standard / experiment
+    planned_start = db.Column(db.Date, nullable=True)              # 開始予定日
+    planned_end = db.Column(db.Date, nullable=True)                # 完了予定日
+    actual_start = db.Column(db.Date, nullable=True)               # 開始日
+    actual_end = db.Column(db.Date, nullable=True)                 # 完了日
+    notes = db.Column(db.Text, nullable=True)                      # 備考
+    archived = db.Column(db.Boolean, default=False)                # アーカイブ済み
+    date_created = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    material = db.relationship('RawMaterial', backref=db.backref('work_orders', lazy=True))
+
+    STATUS_LABELS = {
+        'pending': '取り掛かり前',
+        'in_progress': '作業中',
+        'completed': '完了'
+    }
+    PRIORITY_LABELS = {
+        'critical': '最優先',
+        'high': '優先大',
+        'low': '優先小',
+        'none': '未入力'
+    }
+    PRIORITY_ORDER = {'critical': 0, 'high': 1, 'low': 2, 'none': 3}
+
+    def status_label(self):
+        return self.STATUS_LABELS.get(self.status, self.status)
+
+    def priority_label(self):
+        return self.PRIORITY_LABELS.get(self.priority, self.priority)
+
+    def compute_status(self):
+        """実際の日付からステータスを自動判定
+        - actual_start 未入力       → pending（取り掛かり前）
+        - actual_start 入力済み     → in_progress（作業中）
+        - actual_end が今日以前     → completed（完了）
+        """
+        if self.actual_end and self.actual_end <= date.today():
+            return 'completed'
+        elif self.actual_start:
+            return 'in_progress'
+        else:
+            return 'pending'
+
+    def is_overdue(self):
+        """完了予定日を超えていて未完了の場合"""
+        if self.planned_end and self.status != 'completed':
+            return self.planned_end < date.today()
+        return False
+
+    def progress_pct(self):
+        """開始〜完了予定日に対する経過率（0〜100）"""
+        if not self.planned_start or not self.planned_end:
+            return 0
+        total = (self.planned_end - self.planned_start).days
+        if total <= 0:
+            return 100
+        elapsed = (date.today() - self.planned_start).days
+        return max(0, min(100, int(elapsed / total * 100)))
+
+    def __repr__(self):
+        return f'<WorkOrder {self.process_name}>'
+
+
+class PropertyField(db.Model):
+    """物性値フィールド定義（ラベルごと）"""
+    __tablename__ = 'property_field'
+    id           = db.Column(db.Integer, primary_key=True)
+    label_id     = db.Column(db.Integer, db.ForeignKey('material_label.id'), nullable=True)
+    name         = db.Column(db.String(100), nullable=False)
+    field_type   = db.Column(db.String(20), nullable=False, default='string')  # 'string' or 'number'
+    unit         = db.Column(db.String(30), nullable=True)
+    order_index  = db.Column(db.Integer, default=0)
+    date_created = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    label = db.relationship('MaterialLabel',
+                backref=db.backref('property_fields', lazy=True,
+                                   order_by='PropertyField.order_index',
+                                   cascade='all, delete-orphan'))
+
+    def __repr__(self):
+        return f'<PropertyField {self.name}>'
+
+
+class LotProperty(db.Model):
+    """ロット物性値"""
+    __tablename__ = 'lot_property'
+    id           = db.Column(db.Integer, primary_key=True)
+    lot_id       = db.Column(db.Integer, db.ForeignKey('lot.id'), nullable=False)
+    field_id     = db.Column(db.Integer, db.ForeignKey('property_field.id'), nullable=False)
+    value_string = db.Column(db.String(500), nullable=True)
+    value_number = db.Column(db.Float, nullable=True)
+    date_updated = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    lot   = db.relationship('Lot', backref=db.backref('properties', lazy=True,
+                                                      cascade='all, delete-orphan'))
+    field = db.relationship('PropertyField',
+                backref=db.backref('lot_properties', lazy=True))
+
+    __table_args__ = (db.UniqueConstraint('lot_id', 'field_id'),)
+
+    def __repr__(self):
+        return f'<LotProperty lot={self.lot_id} field={self.field_id}>'
+
+
 class MaterialForm(FlaskForm):
     name = StringField('Name', validators=[DataRequired()])
     weight = FloatField('Weight (g)', validators=[Optional()], default=0.0)
@@ -365,46 +549,72 @@ class TareForm(FlaskForm):
     description = StringField('Description (Optional)', validators=[Optional()])
     submit = SubmitField('Save')
 
+class ContactForm(FlaskForm):
+    name = StringField('Name', validators=[DataRequired()])
+    email = StringField('Email', validators=[DataRequired(), Email()])
+    description = StringField('Description (Optional)', validators=[Optional()])
+    submit = SubmitField('Save')
+
 @app.route('/')
 def index():
-    search = request.args.get('search', '')
-    sort_by = request.args.get('sort_by', 'name')
+    search   = request.args.get('search', '')
+    sort_by  = request.args.get('sort_by', 'name')
+    label_id = request.args.get('label_id', '')
+    labels   = MaterialLabel.query.order_by(MaterialLabel.name).all()
     materials = RawMaterial.query
     if search:
         materials = materials.filter(RawMaterial.name.contains(search))
+    if label_id == 'none':
+        materials = materials.filter(RawMaterial.label_id == None)
+    elif label_id:
+        try:
+            materials = materials.filter(RawMaterial.label_id == int(label_id))
+        except ValueError:
+            pass
     if sort_by == 'name':
         materials = materials.order_by(RawMaterial.name)
     elif sort_by == 'weight':
         # ソート用: SQLでは直接計算できないため、Pythonでソート
         materials = materials.all()
         materials = sorted(materials, key=lambda m: m.get_total_lot_weight())
-        return render_template('index.html', materials=materials, search=search, sort_by=sort_by)
+        return render_template('index.html', materials=materials, search=search,
+                               sort_by=sort_by, label_id=label_id, labels=labels)
     materials = materials.all()
-    return render_template('index.html', materials=materials, search=search, sort_by=sort_by)
+    return render_template('index.html', materials=materials, search=search,
+                           sort_by=sort_by, label_id=label_id, labels=labels)
 
 @app.route('/add', methods=['GET', 'POST'])
 def add():
     form = MaterialForm()
+    contacts = Contact.query.order_by(Contact.name).all()
+    labels   = MaterialLabel.query.order_by(MaterialLabel.name).all()
     if form.validate_on_submit():
+        label_id_raw = request.form.get('label_id', '')
+        label_id_val = int(label_id_raw) if label_id_raw else None
         material = RawMaterial(
-            name=form.name.data, 
-            weight=form.weight.data if form.weight.data is not None else 0.0, 
+            name=form.name.data,
+            weight=form.weight.data if form.weight.data is not None else 0.0,
             unit='g',  # g固定
             min_weight=form.min_weight.data,
             email=form.email.data,
             excel_path=form.excel_path.data,
-            action_type=form.action_type.data
+            action_type=form.action_type.data,
+            label_id=label_id_val
         )
         db.session.add(material)
         db.session.commit()
         return redirect(url_for('index'))
-    return render_template('add.html', form=form)
+    return render_template('add.html', form=form, contacts=contacts, labels=labels)
 
 @app.route('/edit/<int:id>', methods=['GET', 'POST'])
 def edit(id):
     material = RawMaterial.query.get_or_404(id)
     form = MaterialForm()
+    contacts = Contact.query.order_by(Contact.name).all()
+    labels   = MaterialLabel.query.order_by(MaterialLabel.name).all()
     if form.validate_on_submit():
+        label_id_raw      = request.form.get('label_id', '')
+        material.label_id = int(label_id_raw) if label_id_raw else None
         material.name = form.name.data
         material.weight = form.weight.data
         material.unit = 'g'  # g固定
@@ -421,7 +631,7 @@ def edit(id):
         form.email.data = material.email
         form.excel_path.data = material.excel_path
         form.action_type.data = material.action_type
-    return render_template('edit.html', form=form)
+    return render_template('edit.html', form=form, contacts=contacts, labels=labels, material=material)
 
 @app.route('/material_stats/<int:id>')
 def material_stats(id):
@@ -432,30 +642,37 @@ def material_stats(id):
 @app.route('/delete/<int:id>')
 def delete(id):
     material = RawMaterial.query.get_or_404(id)
-    
+    name = material.name
+
     try:
-        # 関連する予約を先に削除
-        Reservation.query.filter_by(material_id=id).delete()
-        
-        # 関連するロットを削除（ロットに紐づく予約もカスケード削除される）
-        Lot.query.filter_by(material_id=id).delete()
-        
-        # 原料を削除
+        # ロットIDを先に取得
+        lot_ids = [lot.id for lot in material.lots]
+
+        # このロットを参照するReservationUsageを削除
+        if lot_ids:
+            ReservationUsage.query.filter(ReservationUsage.lot_id.in_(lot_ids)).delete(synchronize_session=False)
+
+        # この原料の予約を参照するReservationUsageを削除（lot_idがNoneのもの含む）
+        reservation_ids = [r.id for r in material.reservations]
+        if reservation_ids:
+            ReservationUsage.query.filter(ReservationUsage.reservation_id.in_(reservation_ids)).delete(synchronize_session=False)
+
+        # 原料を削除（cascade='all, delete-orphan' で予約・ロットも連鎖削除）
         db.session.delete(material)
         db.session.commit()
-        flash(f'原料「{material.name}」と関連データを削除しました', 'success')
+        flash(f'原料「{name}」と関連データを削除しました', 'success')
     except Exception as e:
         db.session.rollback()
         flash(f'削除に失敗しました: {str(e)}', 'danger')
-    
+
     return redirect(url_for('index'))
 
 @app.route('/reserve_use/<int:id>', methods=['GET', 'POST'])
 def reserve_use(id):
     material = RawMaterial.query.get_or_404(id)
     form = ReservationForm()
-    # ロット選択肢を追加（空欄も含む）
-    form.lot_id.choices = [(0, '既存ロットから選択しない')] + [(lot.id, lot.lot_name) for lot in material.lots]
+    # ロット選択肢を追加（端数ロットは除外）
+    form.lot_id.choices = [(0, '既存ロットから選択しない')] + [(lot.id, lot.lot_name) for lot in material.lots if not lot.is_fraction]
     if form.validate_on_submit():
         lot_id = form.lot_id.data if form.lot_id.data != 0 else None
         
@@ -489,7 +706,8 @@ def reserve_use(id):
         db.session.commit()
         flash('使用予約を登録しました', 'success')
         return redirect(url_for('index'))
-    return render_template('reserve.html', form=form, material=material, action='use')
+    contacts = Contact.query.order_by(Contact.name).all()
+    return render_template('reserve.html', form=form, material=material, action='use', contacts=contacts)
 
 @app.route('/reserve_replenish/<int:id>', methods=['GET', 'POST'])
 def reserve_replenish(id):
@@ -513,7 +731,8 @@ def reserve_replenish(id):
         db.session.commit()
         flash('補充予約を登録しました', 'success')
         return redirect(url_for('index'))
-    return render_template('reserve.html', form=form, material=material, action='replenish')
+    contacts = Contact.query.order_by(Contact.name).all()
+    return render_template('reserve.html', form=form, material=material, action='replenish', contacts=contacts)
 
 @app.route('/lots/<int:material_id>')
 def lots(material_id):
@@ -554,7 +773,7 @@ def add_lot(material_id):
                 actual_quantity=net_weight,
                 user_name='システム',
                 purpose=f'ロット追加（{form.lot_name.data}）',
-                scheduled_date=datetime.now(),
+                scheduled_date=datetime.now().date(),
                 executed=True,
                 executed_date=datetime.now()
             )
@@ -603,7 +822,7 @@ def edit_lot(id):
                 actual_quantity=quantity,
                 user_name='システム',
                 purpose=f'ロット直接編集（{lot.lot_name}）',
-                scheduled_date=datetime.now(),
+                scheduled_date=datetime.now().date(),
                 executed=True,
                 executed_date=datetime.now()
             )
@@ -625,9 +844,14 @@ def delete_lot(id):
     material_id = lot.material_id
     lot_name = lot.lot_name
     lot_weight = lot.weight
+    is_fraction = lot.is_fraction
+    
+    # このロットを参照しているReservationUsageレコードを削除
+    ReservationUsage.query.filter_by(lot_id=id).delete()
     
     # 統計用に実行済み予約を作成（ロット削除は使用扱い）
-    if lot_weight > 0:
+    # ただし、端数処理されたロットは統計に含まれないため予約を作成しない
+    if lot_weight > 0 and not is_fraction:
         auto_reservation = Reservation(
             material_id=material_id,
             lot_id=None,  # ロット削除後なのでNone
@@ -637,7 +861,7 @@ def delete_lot(id):
             actual_quantity=lot_weight,
             user_name='システム',
             purpose=f'ロット削除（{lot_name}）',
-            scheduled_date=datetime.now(),
+            scheduled_date=datetime.now().date(),
             executed=True,
             executed_date=datetime.now()
         )
@@ -645,7 +869,42 @@ def delete_lot(id):
     
     db.session.delete(lot)
     db.session.commit()
-    flash(f'ロット「{lot_name}」を削除しました', 'success')
+    
+    if is_fraction:
+        flash(f'端数処理ロット「{lot_name}」を削除しました', 'success')
+    else:
+        flash(f'ロット「{lot_name}」を削除しました', 'success')
+    
+    return redirect(url_for('lots', material_id=material_id))
+
+@app.route('/fraction_lot/<int:id>')
+def fraction_lot(id):
+    """ロットを端数処理"""
+    lot = Lot.query.get_or_404(id)
+    material_id = lot.material_id
+    
+    if lot.is_fraction:
+        flash(f'ロット「{lot.lot_name}」は既に端数処理されています', 'warning')
+    else:
+        lot.is_fraction = True
+        db.session.commit()
+        flash(f'ロット「{lot.lot_name}」を端数処理しました', 'success')
+    
+    return redirect(url_for('lots', material_id=material_id))
+
+@app.route('/unfraction_lot/<int:id>')
+def unfraction_lot(id):
+    """端数処理を解除して通常ロットに戻す"""
+    lot = Lot.query.get_or_404(id)
+    material_id = lot.material_id
+    
+    if not lot.is_fraction:
+        flash(f'ロット「{lot.lot_name}」は通常のロットです', 'warning')
+    else:
+        lot.is_fraction = False
+        db.session.commit()
+        flash(f'ロット「{lot.lot_name}」を通常ロットに戻しました', 'success')
+    
     return redirect(url_for('lots', material_id=material_id))
 
 @app.route('/reservations')
@@ -679,77 +938,106 @@ def reservations():
 
 @app.route('/execute_reservation/<int:id>', methods=['GET', 'POST'])
 def execute_reservation(id):
-    """予約を実行して在庫に反映"""
+    """予約を実行して在庫に反映（複数ロット対応）"""
     reservation = Reservation.query.get_or_404(id)
     material = reservation.material
     
     # POSTリクエストの場合、実際の量とロット情報を取得
     if request.method == 'POST':
-        actual_quantity = float(request.form.get('actual_quantity', reservation.quantity))
-        reservation.actual_quantity = actual_quantity
-        quantity_to_use = actual_quantity
-        
-        # 使用予約の場合はロット選択を取得
-        if reservation.type == 'use':
-            lot_id = request.form.get('lot_id')
-            if lot_id:
-                reservation.lot_id = int(lot_id)
-        # 補充予約の場合はロット名を取得
-        elif reservation.type == 'replenish':
-            lot_name = request.form.get('lot_name', '').strip()
-            if lot_name:
+        try:
+            if reservation.type == 'use':
+                # 複数ロットの情報を取得
+                lot_usages = []
+                index = 0
+                while True:
+                    lot_id_key = f'lot_id_{index}'
+                    lot_quantity_key = f'lot_quantity_{index}'
+                    
+                    lot_id = request.form.get(lot_id_key)
+                    lot_quantity = request.form.get(lot_quantity_key)
+                    
+                    if not lot_id or not lot_quantity:
+                        break
+                    
+                    lot_usages.append({
+                        'lot_id': int(lot_id),
+                        'quantity': float(lot_quantity)
+                    })
+                    index += 1
+                
+                if not lot_usages:
+                    flash('エラー: ロットを選択してください', 'danger')
+                    return redirect(url_for('reservations'))
+                
+                # 合計使用量を計算
+                total_quantity = sum(usage['quantity'] for usage in lot_usages)
+                reservation.actual_quantity = total_quantity
+                
+                # 各ロットから在庫を減少
+                for usage in lot_usages:
+                    lot = Lot.query.get(usage['lot_id'])
+                    if not lot:
+                        flash(f'エラー: ロットが見つかりません', 'danger')
+                        db.session.rollback()
+                        return redirect(url_for('reservations'))
+                    
+                    if lot.weight >= usage['quantity']:
+                        lot.weight -= usage['quantity']
+                    else:
+                        flash(f'エラー: ロット「{lot.lot_name}」の在庫が不足しています', 'danger')
+                        db.session.rollback()
+                        return redirect(url_for('reservations'))
+                    
+                    # ReservationUsageレコードを作成
+                    reservation_usage = ReservationUsage(
+                        reservation_id=reservation.id,
+                        lot_id=usage['lot_id'],
+                        quantity=usage['quantity']
+                    )
+                    db.session.add(reservation_usage)
+            
+            elif reservation.type == 'replenish':
+                # 補充予約の場合
+                actual_quantity = float(request.form.get('actual_quantity', reservation.quantity))
+                reservation.actual_quantity = actual_quantity
+                quantity_to_use = actual_quantity
+                
+                # ロット名を取得
+                lot_name = request.form.get('lot_name', '').strip()
+                if not lot_name:
+                    flash('エラー: ロット名を入力してください', 'danger')
+                    return redirect(url_for('reservations'))
+                
                 reservation.lot_name = lot_name
-    else:
-        # GETリクエストの場合は予約量を使用（後方互換性のため）
-        quantity_to_use = reservation.quantity
-        if reservation.actual_quantity:
-            quantity_to_use = reservation.actual_quantity
-    
-    try:
-        if reservation.type == 'use':
-            # 使用予約の実行
-            if not reservation.lot_id:
-                flash('エラー: ロットを選択してください', 'danger')
-                return redirect(url_for('reservations'))
+                
+                # 新規ロット名が指定されている場合
+                existing_lot = Lot.query.filter_by(material_id=material.id, lot_name=lot_name).first()
+                if existing_lot:
+                    # 既存ロットに追加
+                    existing_lot.weight += quantity_to_use
+                else:
+                    # 新規ロット作成
+                    new_lot = Lot(material_id=material.id, lot_name=lot_name, weight=quantity_to_use)
+                    db.session.add(new_lot)
             
-            lot = reservation.lot
-            if lot.weight >= quantity_to_use:
-                lot.weight -= quantity_to_use
-            else:
-                flash(f'エラー: ロット「{lot.lot_name}」の在庫が不足しています', 'danger')
-                return redirect(url_for('reservations'))
+            # 予約を実行済みにマーク
+            reservation.executed = True
+            reservation.executed_date = datetime.now()
+            db.session.commit()
+            flash(f'予約を実行しました: {material.name}', 'success')
         
-        elif reservation.type == 'replenish':
-            # 補充予約の実行
-            if not reservation.lot_name:
-                flash('エラー: ロット名を入力してください', 'danger')
-                return redirect(url_for('reservations'))
-            
-            # 新規ロット名が指定されている場合
-            existing_lot = Lot.query.filter_by(material_id=material.id, lot_name=reservation.lot_name).first()
-            if existing_lot:
-                # 既存ロットに追加
-                existing_lot.weight += quantity_to_use
-            else:
-                # 新規ロット作成
-                new_lot = Lot(material_id=material.id, lot_name=reservation.lot_name, weight=quantity_to_use)
-                db.session.add(new_lot)
+        except Exception as e:
+            db.session.rollback()
+            flash(f'エラーが発生しました: {str(e)}', 'danger')
         
-        # 予約を実行済みにマーク
-        reservation.executed = True
-        reservation.executed_date = datetime.now()
-        db.session.commit()
-        flash(f'予約を実行しました: {material.name} ({quantity_to_use} {material.unit})', 'success')
+        return redirect(url_for('reservations'))
     
-    except Exception as e:
-        db.session.rollback()
-        flash(f'エラーが発生しました: {str(e)}', 'danger')
-    
-    return redirect(url_for('reservations'))
+    # GETリクエストの場合、実行フォームを表示
+    return render_template('execute_reservation.html', reservation=reservation)
 
 @app.route('/execute_recipe/<int:recipe_id>', methods=['POST'])
 def execute_recipe(recipe_id):
-    """レシピ予約を一括実行"""
+    """レシピ予約を一括実行（複数ロット対応）"""
     recipe = Recipe.query.get_or_404(recipe_id)
     
     # このレシピに紐づく未実行の使用予約を取得
@@ -767,34 +1055,57 @@ def execute_recipe(recipe_id):
         # 各原料の実績値を取得して実行
         for reservation in reservations:
             material = reservation.material
-            actual_quantity_key = f'actual_quantity_{reservation.id}'
-            actual_quantity = float(request.form.get(actual_quantity_key, reservation.quantity))
             
-            # ロット選択を取得
-            lot_id_key = f'lot_id_{reservation.id}'
-            lot_id = request.form.get(lot_id_key)
+            # 複数ロットの情報を取得（lot_id_<reservation_id>_<index> と lot_quantity_<reservation_id>_<index>）
+            lot_usages = []
+            index = 0
+            while True:
+                lot_id_key = f'lot_id_{reservation.id}_{index}'
+                lot_quantity_key = f'lot_quantity_{reservation.id}_{index}'
+                
+                lot_id = request.form.get(lot_id_key)
+                lot_quantity = request.form.get(lot_quantity_key)
+                
+                if not lot_id or not lot_quantity:
+                    break
+                
+                lot_usages.append({
+                    'lot_id': int(lot_id),
+                    'quantity': float(lot_quantity)
+                })
+                index += 1
             
-            if not lot_id:
+            if not lot_usages:
                 flash(f'エラー: {material.name}のロットを選択してください', 'danger')
                 db.session.rollback()
                 return redirect(url_for('reservations'))
             
-            reservation.actual_quantity = actual_quantity
-            reservation.lot_id = int(lot_id)
+            # 合計使用量を計算
+            total_quantity = sum(usage['quantity'] for usage in lot_usages)
+            reservation.actual_quantity = total_quantity
             
-            # 在庫を減少
-            lot = Lot.query.get(reservation.lot_id)
-            if not lot:
-                flash(f'エラー: ロットが見つかりません', 'danger')
-                db.session.rollback()
-                return redirect(url_for('reservations'))
-            
-            if lot.weight >= actual_quantity:
-                lot.weight -= actual_quantity
-            else:
-                flash(f'エラー: ロット「{lot.lot_name}」の在庫が不足しています', 'danger')
-                db.session.rollback()
-                return redirect(url_for('reservations'))
+            # 各ロットから在庫を減少
+            for usage in lot_usages:
+                lot = Lot.query.get(usage['lot_id'])
+                if not lot:
+                    flash(f'エラー: ロットが見つかりません', 'danger')
+                    db.session.rollback()
+                    return redirect(url_for('reservations'))
+                
+                if lot.weight >= usage['quantity']:
+                    lot.weight -= usage['quantity']
+                else:
+                    flash(f'エラー: ロット「{lot.lot_name}」の在庫が不足しています', 'danger')
+                    db.session.rollback()
+                    return redirect(url_for('reservations'))
+                
+                # ReservationUsageレコードを作成
+                reservation_usage = ReservationUsage(
+                    reservation_id=reservation.id,
+                    lot_id=usage['lot_id'],
+                    quantity=usage['quantity']
+                )
+                db.session.add(reservation_usage)
             
             # 予約を実行済みにマーク
             reservation.executed = True
@@ -838,7 +1149,8 @@ def edit_reservation(id):
         flash('予約を更新しました', 'success')
         return redirect(url_for('reservations'))
     
-    return render_template('edit_reservation.html', reservation=reservation)
+    contacts = Contact.query.order_by(Contact.name).all()
+    return render_template('edit_reservation.html', reservation=reservation, contacts=contacts)
 
 @app.route('/delete_reservation/<int:id>')
 def delete_reservation(id):
@@ -921,20 +1233,270 @@ def send_alert_email(id):
     
     return redirect(url_for('index'))
 
+# ======================================================
+# ラベル管理ルート (MaterialLabel CRUD)
+# ======================================================
+
+@app.route('/labels')
+def labels():
+    all_labels = MaterialLabel.query.order_by(MaterialLabel.name).all()
+    return render_template('labels.html', labels=all_labels)
+
+@app.route('/labels/add', methods=['POST'])
+def add_label():
+    name  = request.form.get('name', '').strip()
+    color = request.form.get('color', '#6c757d').strip()
+    if not name:
+        flash('ラベル名を入力してください', 'warning')
+        return redirect(url_for('labels'))
+    if MaterialLabel.query.filter_by(name=name).first():
+        flash(f'ラベル名「{name}」は既に使用されています', 'warning')
+        return redirect(url_for('labels'))
+    db.session.add(MaterialLabel(name=name, color=color))
+    db.session.commit()
+    flash(f'ラベル「{name}」を追加しました', 'success')
+    return redirect(url_for('labels'))
+
+@app.route('/labels/edit/<int:id>', methods=['GET', 'POST'])
+def edit_label(id):
+    label = MaterialLabel.query.get_or_404(id)
+    if request.method == 'POST':
+        name  = request.form.get('name', '').strip()
+        color = request.form.get('color', label.color).strip()
+        if not name:
+            flash('ラベル名を入力してください', 'warning')
+            return redirect(url_for('edit_label', id=id))
+        conflict = MaterialLabel.query.filter(
+            MaterialLabel.name == name, MaterialLabel.id != id
+        ).first()
+        if conflict:
+            flash(f'ラベル名「{name}」は既に使用されています', 'warning')
+            return redirect(url_for('edit_label', id=id))
+        label.name  = name
+        label.color = color
+        db.session.commit()
+        flash(f'ラベル「{name}」を更新しました', 'success')
+        return redirect(url_for('labels'))
+    return render_template('edit_label.html', label=label)
+
+@app.route('/labels/delete/<int:id>', methods=['POST'])
+def delete_label(id):
+    label = MaterialLabel.query.get_or_404(id)
+    name  = label.name
+    RawMaterial.query.filter_by(label_id=id).update({'label_id': None})
+    db.session.delete(label)
+    db.session.commit()
+    flash(f'ラベル「{name}」を削除しました', 'success')
+    return redirect(url_for('labels'))
+
+# ======================================================
+# 物性値テンプレート管理ルート
+# ======================================================
+
+@app.route('/property_templates')
+def property_templates():
+    """物性値テンプレート一覧: ラベルごとにフィールド一覧を表示"""
+    labels = MaterialLabel.query.order_by(MaterialLabel.name).all()
+    unlabeled_fields = PropertyField.query.filter_by(label_id=None).order_by(PropertyField.order_index).all()
+    return render_template('property_templates.html', labels=labels,
+                           unlabeled_fields=unlabeled_fields)
+
+@app.route('/property_templates/fields/add', methods=['POST'])
+def add_property_field():
+    """フィールドを追加"""
+    label_id_raw = request.form.get('label_id', '')
+    label_id     = int(label_id_raw) if label_id_raw else None
+    name         = request.form.get('name', '').strip()
+    field_type   = request.form.get('field_type', 'string')
+    unit         = request.form.get('unit', '').strip() or None
+    if not name:
+        flash('フィールド名を入力してください', 'warning')
+        return redirect(url_for('property_templates'))
+    max_order = db.session.query(db.func.max(PropertyField.order_index)).filter_by(label_id=label_id).scalar() or 0
+    field = PropertyField(label_id=label_id, name=name, field_type=field_type,
+                          unit=unit, order_index=max_order + 1)
+    db.session.add(field)
+    db.session.commit()
+    flash(f'フィールド「{name}」を追加しました', 'success')
+    return redirect(url_for('property_templates'))
+
+@app.route('/property_templates/fields/edit/<int:id>', methods=['GET', 'POST'])
+def edit_property_field(id):
+    """フィールドを編集"""
+    field = PropertyField.query.get_or_404(id)
+    if request.method == 'POST':
+        name       = request.form.get('name', '').strip()
+        field_type = request.form.get('field_type', field.field_type)
+        unit       = request.form.get('unit', '').strip() or None
+        if not name:
+            flash('フィールド名を入力してください', 'warning')
+            return redirect(url_for('edit_property_field', id=id))
+        field.name       = name
+        field.field_type = field_type
+        field.unit       = unit
+        db.session.commit()
+        flash(f'フィールド「{name}」を更新しました', 'success')
+        return redirect(url_for('property_templates'))
+    return render_template('edit_property_field.html', field=field)
+
+@app.route('/property_templates/fields/delete/<int:id>', methods=['POST'])
+def delete_property_field(id):
+    """フィールドを削除（関連する物性値も連鎖削除）"""
+    field = PropertyField.query.get_or_404(id)
+    name  = field.name
+    db.session.delete(field)
+    db.session.commit()
+    flash(f'フィールド「{name}」を削除しました', 'success')
+    return redirect(url_for('property_templates'))
+
+@app.route('/property_templates/fields/reorder', methods=['POST'])
+def reorder_property_fields():
+    """フィールド並び順をJSONで更新（AJAX用）"""
+    data = request.get_json()
+    for item in data:
+        field = PropertyField.query.get(item['id'])
+        if field:
+            field.order_index = item['order']
+    db.session.commit()
+    return jsonify({'status': 'ok'})
+
+# ======================================================
+# ロット物性値ルート
+# ======================================================
+
+@app.route('/lots/<int:lot_id>/properties', methods=['GET', 'POST'])
+def lot_properties(lot_id):
+    """ロットの物性値を表示・編集"""
+    lot      = Lot.query.get_or_404(lot_id)
+    material = lot.material
+    label_id = material.label_id
+    fields   = PropertyField.query.filter_by(label_id=label_id).order_by(PropertyField.order_index).all()
+
+    if request.method == 'POST':
+        for field in fields:
+            raw = request.form.get(f'field_{field.id}', '').strip()
+            prop = LotProperty.query.filter_by(lot_id=lot_id, field_id=field.id).first()
+            if prop is None:
+                prop = LotProperty(lot_id=lot_id, field_id=field.id)
+                db.session.add(prop)
+            if field.field_type == 'number':
+                try:
+                    prop.value_number = float(raw) if raw else None
+                    prop.value_string = None
+                except ValueError:
+                    prop.value_number = None
+                    prop.value_string = raw
+            elif field.field_type == 'date':
+                prop.value_string = raw or None   # 'YYYY-MM-DD' 形式で保存
+                prop.value_number = None
+            else:
+                prop.value_string = raw or None
+                prop.value_number = None
+            prop.date_updated = datetime.utcnow()
+        db.session.commit()
+        flash('物性値を保存しました', 'success')
+        return redirect(url_for('lot_properties', lot_id=lot_id))
+
+    existing = {lp.field_id: lp for lp in lot.properties}
+    return render_template('lot_properties.html', lot=lot, material=material,
+                           fields=fields, existing=existing)
+
+# ======================================================
+# Excelエクスポートルート
+# ======================================================
+
+@app.route('/export/properties')
+def export_properties():
+    """全原料のロット物性値をラベル別シートでExcelエクスポート"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from io import BytesIO
+
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    def make_sheet(wb, sheet_name, label_id, fields):
+        ws = wb.create_sheet(title=sheet_name[:31])
+        headers = ['原料名', 'ロット名', '重量(g)', '端数'] + [
+            f.name + (f' ({f.unit})' if f.unit else '') for f in fields
+        ]
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color='FFFFFF')
+            cell.fill = PatternFill('solid', fgColor='2563EB')
+            cell.alignment = Alignment(horizontal='center')
+        if label_id is None:
+            mat_list = RawMaterial.query.filter_by(label_id=None).order_by(RawMaterial.name).all()
+        else:
+            mat_list = RawMaterial.query.filter_by(label_id=label_id).order_by(RawMaterial.name).all()
+        for material in mat_list:
+            for lot in sorted(material.lots, key=lambda l: l.lot_name):
+                row = [material.name, lot.lot_name, lot.weight,
+                       '端数' if lot.is_fraction else '']
+                prop_map = {lp.field_id: lp for lp in lot.properties}
+                for field in fields:
+                    lp = prop_map.get(field.id)
+                    if lp:
+                        if field.field_type == 'number':
+                            row.append(lp.value_number)
+                        elif field.field_type == 'date' and lp.value_string:
+                            # 日付型: Excel日付セルとして出力
+                            try:
+                                from datetime import date as _date
+                                row.append(_date.fromisoformat(lp.value_string))
+                            except Exception:
+                                row.append(lp.value_string)
+                        else:
+                            row.append(lp.value_string or '')
+                    else:
+                        row.append('')
+                ws.append(row)
+        for col in ws.columns:
+            max_len = max((len(str(cell.value or '')) for cell in col), default=0)
+            ws.column_dimensions[col[0].column_letter].width = max(12, min(max_len + 4, 50))
+        return ws
+
+    all_labels = MaterialLabel.query.order_by(MaterialLabel.name).all()
+    for label in all_labels:
+        fields = PropertyField.query.filter_by(label_id=label.id).order_by(PropertyField.order_index).all()
+        make_sheet(wb, label.name, label.id, fields)
+
+    unlabeled_fields = PropertyField.query.filter_by(label_id=None).order_by(PropertyField.order_index).all()
+    make_sheet(wb, 'ラベルなし', None, unlabeled_fields)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True,
+                     download_name='物性値データベース.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+# ======================================================
+
 @app.route('/dashboard')
 def dashboard():
     return render_template('dashboard.html')
 
 @app.route('/api/stats')
 def api_stats():
-    materials = RawMaterial.query.all()
-    
+    # ラベルフィルタ対応
+    label_id_param = request.args.get('label_id', '')
+    mat_query = RawMaterial.query
+    if label_id_param == 'none':
+        mat_query = mat_query.filter(RawMaterial.label_id == None)
+    elif label_id_param:
+        try:
+            mat_query = mat_query.filter(RawMaterial.label_id == int(label_id_param))
+        except ValueError:
+            pass
+    materials = mat_query.all()
+
     # 総在庫数
     total_materials = len(materials)
-    
+
     # 低在庫アラート数（予測在庫で判定）
     low_stock_count = sum(1 for m in materials if m.is_low_stock_alert())
-    
+
     # アラート一覧
     alert_materials = []
     for material in materials:
@@ -942,7 +1504,7 @@ def api_stats():
             total_weight = material.get_total_lot_weight()
             predicted = material.get_predicted_stock()
             critical_periods = material.get_critical_periods()
-            
+
             # 日付をJSON互換形式に変換
             serialized_periods = []
             for period in critical_periods:
@@ -952,7 +1514,7 @@ def api_stats():
                     'min_stock': round(period['min_stock'], 2),
                     'shortage': round(period['shortage'], 2)
                 })
-            
+
             alert_materials.append({
                 'id': material.id,
                 'name': material.name,
@@ -963,9 +1525,11 @@ def api_stats():
                 'email': material.email,
                 'excel_path': material.excel_path,
                 'action_type': material.action_type,
-                'critical_periods': serialized_periods
+                'critical_periods': serialized_periods,
+                'label_name':  material.label.name  if material.label else None,
+                'label_color': material.label.color if material.label else None
             })
-    
+
     # 在庫状況データ
     materials_data = []
     for material in materials:
@@ -976,37 +1540,43 @@ def api_stats():
             'current': round(total_weight, 2),
             'predicted': round(predicted_stock, 2),
             'min_weight': material.min_weight,
-            'unit': material.unit
+            'unit': material.unit,
+            'label_name':  material.label.name  if material.label else None,
+            'label_color': material.label.color if material.label else None
         })
-    
+
     # 予約情報の集計
     use_reservations = Reservation.query.filter_by(type='use').order_by(Reservation.date.desc()).limit(5).all()
     replenish_reservations = Reservation.query.filter_by(type='replenish').order_by(Reservation.date.desc()).limit(5).all()
-    
+
     use_list = [{
         'material': r.material.name,
         'lot': r.lot.lot_name if r.lot else '原料全体',
         'quantity': r.quantity,
         'date': r.date.strftime('%Y/%m/%d %H:%M') if r.date else 'N/A'
     } for r in use_reservations]
-    
+
     replenish_list = [{
         'material': r.material.name,
         'lot': r.lot.lot_name if r.lot else '原料全体',
         'quantity': r.quantity,
         'date': r.date.strftime('%Y/%m/%d %H:%M') if r.date else 'N/A'
     } for r in replenish_reservations]
-    
+
     # 期限切れ予約数を計算
     from datetime import date, timedelta
     today = date.today()
     all_reservations = Reservation.query.filter_by(executed=False).all()
     overdue_count = sum(1 for r in all_reservations if r.scheduled_date and r.scheduled_date < today)
-    
+
     # 今週（7日以内）の予約数を計算
     week_later = today + timedelta(days=7)
     week_reservations = sum(1 for r in all_reservations if r.scheduled_date and today <= r.scheduled_date <= week_later)
-    
+
+    # 全ラベル一覧（ダッシュボードのドロップダウン用）
+    all_labels = [{'id': l.id, 'name': l.name, 'color': l.color}
+                  for l in MaterialLabel.query.order_by(MaterialLabel.name).all()]
+
     return jsonify({
         'total_materials': total_materials,
         'low_stock_count': low_stock_count,
@@ -1015,7 +1585,8 @@ def api_stats():
         'use_reservations': use_list,
         'replenish_reservations': replenish_list,
         'overdue_count': overdue_count,
-        'week_reservations': week_reservations
+        'week_reservations': week_reservations,
+        'labels': all_labels
     })
 
 @app.route('/api/material_stats/<int:id>')
@@ -1284,9 +1855,6 @@ def open_excel(id):
         return redirect(url_for('dashboard'))
     
     try:
-        import subprocess
-        import platform
-        
         # ファイルの存在確認
         if not os.path.exists(material.excel_path):
             flash(f'ファイルが見つかりません: {material.excel_path}', 'danger')
@@ -1367,6 +1935,56 @@ def delete_tare(id):
     flash(f'風袋「{tare_name}」を削除しました', 'success')
     return redirect(url_for('tare_settings'))
 
+@app.route('/contacts')
+def contacts():
+    """アドレス帳一覧"""
+    contacts = Contact.query.order_by(Contact.name).all()
+    return render_template('contacts.html', contacts=contacts)
+
+@app.route('/add_contact', methods=['GET', 'POST'])
+def add_contact():
+    """連絡先を追加"""
+    form = ContactForm()
+    if form.validate_on_submit():
+        contact = Contact(
+            name=form.name.data,
+            email=form.email.data,
+            description=form.description.data
+        )
+        db.session.add(contact)
+        db.session.commit()
+        flash(f'連絡先「{form.name.data}」を追加しました', 'success')
+        return redirect(url_for('contacts'))
+    return render_template('add_contact.html', form=form)
+
+@app.route('/edit_contact/<int:id>', methods=['GET', 'POST'])
+def edit_contact(id):
+    """連絡先を編集"""
+    contact = Contact.query.get_or_404(id)
+    form = ContactForm()
+    if form.validate_on_submit():
+        contact.name = form.name.data
+        contact.email = form.email.data
+        contact.description = form.description.data
+        db.session.commit()
+        flash(f'連絡先「{contact.name}」を更新しました', 'success')
+        return redirect(url_for('contacts'))
+    elif request.method == 'GET':
+        form.name.data = contact.name
+        form.email.data = contact.email
+        form.description.data = contact.description
+    return render_template('edit_contact.html', form=form, contact=contact)
+
+@app.route('/delete_contact/<int:id>')
+def delete_contact(id):
+    """連絡先を削除"""
+    contact = Contact.query.get_or_404(id)
+    contact_name = contact.name
+    db.session.delete(contact)
+    db.session.commit()
+    flash(f'連絡先「{contact_name}」を削除しました', 'success')
+    return redirect(url_for('contacts'))
+
 @app.route('/change_database_folder', methods=['POST'])
 def change_database_folder():
     """データベースフォルダを変更"""
@@ -1397,13 +2015,301 @@ def change_database_folder():
     
     return redirect(url_for('settings'))
 
+# ======================================================
+# 作業工程進捗管理ルート
+# ======================================================
+
+@app.route('/work_orders')
+def work_orders():
+    """作業工程一覧（ページロード時に全作業のステータスを自動同期）"""
+    # 非アーカイブ作業のステータスを実際の日付から自動同期
+    all_active = WorkOrder.query.filter_by(archived=False).all()
+    changed = False
+    for wo in all_active:
+        new_status = wo.compute_status()
+        if wo.status != new_status:
+            wo.status = new_status
+            changed = True
+    if changed:
+        db.session.commit()
+
+    show_archived = request.args.get('archived', '0') == '1'
+    status_filter = request.args.get('status', 'all')
+    priority_filter = request.args.get('priority', 'all')
+    type_filter = request.args.get('type', 'all')
+    search = request.args.get('search', '')
+
+    query = WorkOrder.query.filter_by(archived=show_archived)
+
+    if status_filter != 'all':
+        query = query.filter_by(status=status_filter)
+    if priority_filter != 'all':
+        query = query.filter_by(priority=priority_filter)
+    if type_filter != 'all':
+        query = query.filter_by(experiment_type=type_filter)
+    if search:
+        query = query.filter(
+            db.or_(
+                WorkOrder.process_name.contains(search),
+                WorkOrder.lot_name.contains(search)
+            )
+        )
+
+    # 優先度→完了予定日の順でソート
+    orders = query.order_by(
+        db.case(
+            {'critical': 0, 'high': 1, 'low': 2, 'none': 3},
+            value=WorkOrder.priority
+        ),
+        WorkOrder.planned_end.asc().nullslast(),
+        WorkOrder.date_created.desc()
+    ).all()
+
+    return render_template('work_orders.html',
+                           work_orders=orders,
+                           show_archived=show_archived,
+                           status_filter=status_filter,
+                           priority_filter=priority_filter,
+                           type_filter=type_filter,
+                           search=search)
+
+
+@app.route('/work_orders/dashboard')
+def work_order_dashboard():
+    """作業工程進捗ダッシュボード"""
+    active_orders = WorkOrder.query.filter_by(archived=False).all()
+    archived_count = WorkOrder.query.filter_by(archived=True).count()
+
+    # ステータス集計
+    status_counts = {
+        'pending': sum(1 for o in active_orders if o.status == 'pending'),
+        'in_progress': sum(1 for o in active_orders if o.status == 'in_progress'),
+        'completed': sum(1 for o in active_orders if o.status == 'completed'),
+    }
+
+    # 優先度集計
+    priority_counts = {
+        'critical': sum(1 for o in active_orders if o.priority == 'critical'),
+        'high': sum(1 for o in active_orders if o.priority == 'high'),
+        'low': sum(1 for o in active_orders if o.priority == 'low'),
+        'none': sum(1 for o in active_orders if o.priority == 'none'),
+    }
+
+    # 期限切れ
+    overdue = [o for o in active_orders if o.is_overdue()]
+
+    # 今週完了予定
+    from datetime import timedelta
+    week_later = date.today() + timedelta(days=7)
+    due_this_week = [
+        o for o in active_orders
+        if o.planned_end and date.today() <= o.planned_end <= week_later
+        and o.status != 'completed'
+    ]
+
+    # 直近完了（7日以内）
+    recently_completed = [
+        o for o in active_orders
+        if o.status == 'completed' and o.actual_end
+        and (date.today() - o.actual_end).days <= 7
+    ]
+
+    return render_template('work_order_dashboard.html',
+                           active_orders=active_orders,
+                           archived_count=archived_count,
+                           status_counts=status_counts,
+                           priority_counts=priority_counts,
+                           overdue=overdue,
+                           due_this_week=due_this_week,
+                           recently_completed=recently_completed)
+
+
+@app.route('/work_orders/add', methods=['GET', 'POST'])
+def add_work_order():
+    """作業工程を追加"""
+    materials = RawMaterial.query.order_by(RawMaterial.name).all()
+    contacts = Contact.query.order_by(Contact.name).all()
+    if request.method == 'POST':
+        try:
+            def parse_date(key):
+                val = request.form.get(key, '').strip()
+                return datetime.strptime(val, '%Y-%m-%d').date() if val else None
+
+            wo = WorkOrder(
+                process_name=request.form.get('process_name', '').strip(),
+                lot_name=request.form.get('lot_name', '').strip() or None,
+                material_id=int(request.form.get('material_id')) if request.form.get('material_id') else None,
+                status=request.form.get('status', 'pending'),
+                priority=request.form.get('priority', 'none'),
+                invoice_issued=request.form.get('invoice_issued') == '1',
+                worker_name=request.form.get('worker_name', '').strip() or None,
+                experiment_type=request.form.get('experiment_type', 'standard'),
+                planned_start=parse_date('planned_start'),
+                planned_end=parse_date('planned_end'),
+                notes=request.form.get('notes', '').strip() or None,
+            )
+            db.session.add(wo)
+            db.session.commit()
+            flash(f'作業工程「{wo.process_name}」を登録しました', 'success')
+            return redirect(url_for('work_orders'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'登録に失敗しました: {str(e)}', 'danger')
+
+    return render_template('add_work_order.html', materials=materials, contacts=contacts)
+
+
+@app.route('/work_orders/edit/<int:id>', methods=['GET', 'POST'])
+def edit_work_order(id):
+    """作業工程を編集"""
+    wo = WorkOrder.query.get_or_404(id)
+    materials = RawMaterial.query.order_by(RawMaterial.name).all()
+    contacts = Contact.query.order_by(Contact.name).all()
+    if request.method == 'POST':
+        try:
+            def parse_date(key):
+                val = request.form.get(key, '').strip()
+                return datetime.strptime(val, '%Y-%m-%d').date() if val else None
+
+            wo.process_name = request.form.get('process_name', '').strip()
+            wo.lot_name = request.form.get('lot_name', '').strip() or None
+            wo.material_id = int(request.form.get('material_id')) if request.form.get('material_id') else None
+            wo.status = request.form.get('status', 'pending')
+            wo.priority = request.form.get('priority', 'none')
+            wo.invoice_issued = request.form.get('invoice_issued') == '1'
+            wo.worker_name = request.form.get('worker_name', '').strip() or None
+            wo.experiment_type = request.form.get('experiment_type', 'standard')
+            wo.planned_start = parse_date('planned_start')
+            wo.planned_end = parse_date('planned_end')
+            wo.actual_start = parse_date('actual_start')
+            wo.actual_end = parse_date('actual_end')
+            wo.notes = request.form.get('notes', '').strip() or None
+            # 実際の日付からステータスを自動更新
+            wo.status = wo.compute_status()
+            db.session.commit()
+            flash(f'作業工程「{wo.process_name}」を更新しました', 'success')
+            return redirect(url_for('work_orders'))
+        except Exception as e:
+            db.session.rollback()
+            flash(f'更新に失敗しました: {str(e)}', 'danger')
+
+    return render_template('edit_work_order.html', wo=wo, materials=materials, contacts=contacts)
+
+
+@app.route('/work_orders/delete/<int:id>', methods=['POST'])
+def delete_work_order(id):
+    """作業工程を削除"""
+    wo = WorkOrder.query.get_or_404(id)
+    name = wo.process_name
+    db.session.delete(wo)
+    db.session.commit()
+    flash(f'作業工程「{name}」を削除しました', 'success')
+    return redirect(url_for('work_orders'))
+
+
+@app.route('/work_orders/archive/<int:id>', methods=['POST'])
+def archive_work_order(id):
+    """作業工程をアーカイブ"""
+    wo = WorkOrder.query.get_or_404(id)
+    wo.archived = True
+    db.session.commit()
+    flash(f'「{wo.process_name}」をアーカイブしました', 'success')
+    return redirect(url_for('work_orders'))
+
+
+@app.route('/work_orders/archive_completed', methods=['POST'])
+def archive_completed_work_orders():
+    """完了済み作業を一括アーカイブ"""
+    completed = WorkOrder.query.filter_by(status='completed', archived=False).all()
+    count = len(completed)
+    for wo in completed:
+        wo.archived = True
+    if count > 0:
+        db.session.commit()
+        flash(f'{count}件の完了済み作業をアーカイブしました', 'success')
+    else:
+        flash('アーカイブ対象の完了済み作業はありません', 'info')
+    return redirect(url_for('work_orders'))
+
+
+@app.route('/work_orders/unarchive/<int:id>', methods=['POST'])
+def unarchive_work_order(id):
+    """アーカイブを解除"""
+    wo = WorkOrder.query.get_or_404(id)
+    wo.archived = False
+    db.session.commit()
+    flash(f'「{wo.process_name}」のアーカイブを解除しました', 'success')
+    return redirect(url_for('work_orders', archived='1'))
+
+
+@app.route('/work_orders/update_status/<int:id>', methods=['POST'])
+@csrf.exempt
+def update_work_order_status(id):
+    """ステータスをAJAXで更新"""
+    wo = WorkOrder.query.get_or_404(id)
+    data = request.get_json()
+    new_status = data.get('status')
+    if new_status in ('pending', 'in_progress', 'completed'):
+        wo.status = new_status
+        if new_status == 'in_progress' and not wo.actual_start:
+            wo.actual_start = date.today()
+        if new_status == 'completed' and not wo.actual_end:
+            wo.actual_end = date.today()
+        db.session.commit()
+        return jsonify({'ok': True, 'status': wo.status, 'status_label': wo.status_label()})
+    return jsonify({'ok': False}), 400
+
+
+@app.route('/work_orders/calendar')
+def work_order_calendar():
+    """作業カレンダー（誰がどの作業をするか可視化）"""
+    contacts = Contact.query.order_by(Contact.name).all()
+    return render_template('work_order_calendar.html', contacts=contacts)
+
+
+@app.route('/api/work_orders')
+def api_work_orders():
+    """作業工程データをJSON形式で返す（ダッシュボード・カレンダー用）"""
+    active = WorkOrder.query.filter_by(archived=False).all()
+    result = []
+    for wo in active:
+        result.append({
+            'id': wo.id,
+            'process_name': wo.process_name,
+            'lot_name': wo.lot_name,
+            'worker_name': wo.worker_name,
+            'status': wo.status,
+            'status_label': wo.status_label(),
+            'priority': wo.priority,
+            'priority_label': wo.priority_label(),
+            'invoice_issued': wo.invoice_issued,
+            'experiment_type': wo.experiment_type,
+            'planned_start': wo.planned_start.isoformat() if wo.planned_start else None,
+            'planned_end': wo.planned_end.isoformat() if wo.planned_end else None,
+            'actual_start': wo.actual_start.isoformat() if wo.actual_start else None,
+            'actual_end': wo.actual_end.isoformat() if wo.actual_end else None,
+            'is_overdue': wo.is_overdue(),
+            'progress_pct': wo.progress_pct(),
+            'material_name': wo.material.name if wo.material else None,
+        })
+    return jsonify(result)
+
+
 def open_browser():
     """ブラウザを自動的に開く"""
     webbrowser.open('http://127.0.0.1:5000/')
 
 if __name__ == '__main__':
     with app.app_context():
+        # 接続プールをクリアしてメタデータをリフレッシュ
+        db.engine.dispose()
+        
+        # データベースとテーブルの作成
         db.create_all()
+        
+        # 既存テーブルのメタデータを再読み込み
+        db.metadata.reflect(bind=db.engine)
+        
     # 少し遅延してブラウザを開く
     threading.Timer(1.5, open_browser).start()
     

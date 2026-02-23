@@ -45,9 +45,16 @@
         </div>
         {% endif %}
 
+        <!-- アドレス帳datalist -->
+        <datalist id="contactsList">
+            {% for c in contacts %}
+            <option value="{{ c.name }}">
+            {% endfor %}
+        </datalist>
+
         <div class="mb-3">
             <label for="user_name" class="form-label">使用者名（任意）</label>
-            {{ form.user_name(class="form-control", id="user_name") }}
+            {{ form.user_name(class="form-control", id="user_name", list="contactsList", placeholder="名前を入力またはアドレス帳から選択") }}
         </div>
 
         <div class="mb-3">

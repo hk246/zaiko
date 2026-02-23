@@ -1,115 +1,94 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>原料編集</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
-</head>
-<body>
-    <div class="container mt-5">
-        <h1 class="mb-4">原料編集</h1>
-        <form method="POST" class="w-50">
-            {{ form.hidden_tag() }}
-            <div class="mb-3">
-                {{ form.name.label(class="form-label") }}
-                {{ form.name(class="form-control") }}
-            </div>
-            <div class="mb-3">
-                {{ form.weight.label(class="form-label") }}
-                {{ form.weight(class="form-control") }}
-            </div>
-            <div class="mb-3">
-                {{ form.min_weight.label(class="form-label") }}
-                {{ form.min_weight(class="form-control") }}
-            </div>
-            <div class="mb-3">
-                {{ form.action_type.label(class="form-label") }}
-                {{ form.action_type(class="form-control") }}
-            </div>
-            <div class="mb-3">
-                {{ form.email.label(class="form-label") }}
-                <div class="input-group">
-                    {{ form.email(class="form-control", id="emailInput") }}
-                    <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#outlookModal">
-                        <i class="bi bi-search"></i> 名前で検索
-                    </button>
-                </div>
-            </div>
-            <div class="mb-3">
-                {{ form.excel_path.label(class="form-label") }}
-                {{ form.excel_path(class="form-control") }}
-            </div>
-            {{ form.submit(class="btn btn-primary") }}
-        </form>
-        <a href="{{ url_for('index') }}" class="btn btn-secondary mt-3">在庫に戻る</a>
-    </div>
+{% extends "base.html" %}
 
-    <!-- Outlook検索モーダル -->
-    <div class="modal fade" id="outlookModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">連絡先を検索</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+{% block title %}原料編集 - 在庫管理システム{% endblock %}
+{% block page_title %}原料編集{% endblock %}
+
+{% block content %}
+<div style="max-width:640px;">
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-pencil-square me-2 text-warning"></i>原料情報編集
+        </div>
+        <div class="card-body">
+            <form method="POST">
+                {{ form.hidden_tag() }}
+
+                <div class="mb-4">
+                    <label class="form-label">原料名 <span class="text-danger">*</span></label>
+                    {{ form.name(class="form-control") }}
                 </div>
-                <div class="modal-body">
-                    <input type="text" class="form-control mb-3" id="searchInput" placeholder="名前を入力...">
-                    <div id="searchResults"></div>
+
+                <div class="row g-3 mb-4">
+                    <div class="col-sm-6">
+                        <label class="form-label">初期重量 (g)</label>
+                        {{ form.weight(class="form-control") }}
+                        <div class="form-text">在庫重量はロット管理から変更してください</div>
+                    </div>
+                    <div class="col-sm-6">
+                        <label class="form-label">最低在庫量 (g)</label>
+                        {{ form.min_weight(class="form-control") }}
+                        <div class="form-text">これを下回るとアラートが出ます</div>
+                    </div>
                 </div>
-            </div>
+
+                <hr style="border-color:var(--border-color);margin:20px 0;">
+
+                <div class="mb-3">
+                    <label class="form-label">低在庫アクション</label>
+                    {{ form.action_type(class="form-select") }}
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">購入担当者メールアドレス</label>
+                    {% if contacts %}
+                    <select class="form-select mb-2" id="contactSelect" onchange="selectContact()">
+                        <option value="">— アドレス帳から選択 —</option>
+                        {% for contact in contacts %}
+                        <option value="{{ contact.email }}">{{ contact.name }} ({{ contact.email }})</option>
+                        {% endfor %}
+                    </select>
+                    {% endif %}
+                    {{ form.email(class="form-control", id="emailInput") }}
+                </div>
+
+                <div class="mb-4">
+                    <label class="form-label">発注用Excelファイルパス</label>
+                    {{ form.excel_path(class="form-control") }}
+                </div>
+
+                <hr style="border-color:var(--border-color);margin:20px 0;">
+
+                <div class="mb-4">
+                    <label class="form-label">
+                        <i class="bi bi-tags-fill me-1 text-primary"></i>ラベル（カテゴリ）
+                    </label>
+                    <select name="label_id" class="form-select">
+                        <option value="" {% if not material.label_id %}selected{% endif %}>— ラベルなし —</option>
+                        {% for lbl in labels %}
+                        <option value="{{ lbl.id }}"
+                                {% if material.label_id == lbl.id %}selected{% endif %}>
+                            {{ lbl.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text">
+                        <a href="{{ url_for('labels') }}" class="text-primary" target="_blank">ラベル管理</a>
+                    </div>
+                </div>
+
+                <div class="d-flex gap-2">
+                    {{ form.submit(class="btn btn-primary") }}
+                    <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">キャンセル</a>
+                </div>
+            </form>
         </div>
     </div>
+</div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // Outlook検索
-        let searchTimeout;
-        document.getElementById('searchInput').addEventListener('input', function(e) {
-            clearTimeout(searchTimeout);
-            const searchText = e.target.value;
-            
-            if (searchText.length < 2) {
-                document.getElementById('searchResults').innerHTML = '';
-                return;
-            }
-            
-            searchTimeout = setTimeout(() => {
-                fetch('/api/outlook-contacts', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ search: searchText })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    const resultsDiv = document.getElementById('searchResults');
-                    if (data.length === 0) {
-                        resultsDiv.innerHTML = '<p class="text-muted">結果が見つかりませんでした</p>';
-                    } else {
-                        resultsDiv.innerHTML = data.map(contact => `
-                            <div class="list-group-item list-group-item-action" style="cursor: pointer;" 
-                                 onclick="selectContact('${contact.email}')">
-                                <strong>${contact.name}</strong><br>
-                                <small class="text-muted">${contact.email}</small>
-                            </div>
-                        `).join('');
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    document.getElementById('searchResults').innerHTML = 
-                        '<p class="text-danger">エラーが発生しました</p>';
-                });
-            }, 500);
-        });
-
-        function selectContact(email) {
-            document.getElementById('emailInput').value = email;
-            bootstrap.Modal.getInstance(document.getElementById('outlookModal')).hide();
-        }
-    </script>
-</body>
-</html>
+<script>
+function selectContact() {
+    const val = document.getElementById('contactSelect').value;
+    if (val) document.getElementById('emailInput').value = val;
+}
+</script>
+{% endblock %}

@@ -1,444 +1,536 @@
 {% extends "base.html" %}
 
 {% block title %}予約管理 - 在庫管理システム{% endblock %}
+{% block page_title %}予約管理{% endblock %}
 
 {% block extra_style %}
-.reservation-card {
-    border-left: 4px solid #0d6efd;
-    transition: transform 0.2s;
+.res-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 16px;
+    transition: box-shadow 0.2s;
+    height: 100%;
 }
-.reservation-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+
+.res-card:hover {
+    box-shadow: var(--shadow-md);
 }
-.use-card {
-    border-left-color: #dc3545;
+
+.res-card.use-card   { border-left: 3px solid #dc2626; }
+.res-card.replenish-card { border-left: 3px solid #16a34a; }
+.res-card.overdue-card { border-top: 2px solid #d97706; }
+
+.res-title { font-weight: 700; font-size: 0.95rem; margin-bottom: 8px; }
+.res-meta  { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.8; }
+.res-qty   { font-size: 1.1rem; font-weight: 700; }
+
+.recipe-group-card {
+    border: 1px solid #bfdbfe;
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 20px;
 }
-.replenish-card {
-    border-left-color: #198754;
+
+.recipe-group-header {
+    background: #eff6ff;
+    padding: 12px 16px;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #bfdbfe;
 }
 {% endblock %}
 
 {% block content %}
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1><i class="bi bi-calendar-check"></i> 予約管理</h1>
+{% if overdue_count > 0 %}
+<div class="alert alert-warning d-flex align-items-center gap-2 mb-4" style="border-radius:var(--radius);border:none;background:#fffbeb;border-left:4px solid #d97706;">
+    <i class="bi bi-exclamation-triangle-fill" style="color:#d97706;font-size:1.1rem;"></i>
+    <div>
+        <strong>期限切れ予約が {{ overdue_count }} 件あります</strong>
+        — 実行ボタンから在庫に反映してください
     </div>
+</div>
+{% endif %}
 
-        {% if overdue_count > 0 %}
-        <div class="alert alert-warning alert-dismissible fade show" role="alert">
-            <i class="bi bi-exclamation-triangle-fill"></i> 
-            <strong>期限切れ予約が {{ overdue_count }} 件あります！</strong> 
-            実行ボタンをクリックして在庫に反映してください。
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+<!-- タブ -->
+<ul class="nav nav-tabs mb-4" id="reservationTab">
+    <li class="nav-item">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#useTab">
+            <i class="bi bi-arrow-down-circle text-danger me-1"></i>
+            使用予約
+            <span class="badge bg-danger ms-1">{{ use_reservations|length }}</span>
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#replenishTab">
+            <i class="bi bi-arrow-up-circle text-success me-1"></i>
+            補充予約
+            <span class="badge bg-success ms-1">{{ replenish_reservations|length }}</span>
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <!-- 使用予約タブ -->
+    <div class="tab-pane fade show active" id="useTab">
+
+        {% if recipe_groups %}
+        <h6 class="text-secondary fw-bold mb-3" style="text-transform:uppercase;letter-spacing:0.06em;font-size:0.72rem;">
+            <i class="bi bi-journal-text me-1"></i>レシピ予約
+        </h6>
+
+        {% for recipe_id, group in recipe_groups.items() %}
+        <div class="recipe-group-card mb-3">
+            <div class="recipe-group-header">
+                <div>
+                    <i class="bi bi-journal-text me-1 text-primary"></i>
+                    <strong>{{ group.recipe.name }}</strong>
+                    {% if group.scheduled_date %}
+                    <span class="text-secondary ms-2" style="font-size:0.8rem;">
+                        <i class="bi bi-calendar-event me-1"></i>{{ group.scheduled_date.strftime('%Y/%m/%d') }}
+                    </span>
+                    {% endif %}
+                    {% if group.user_name %}
+                    <span class="text-secondary ms-2" style="font-size:0.8rem;">
+                        <i class="bi bi-person me-1"></i>{{ group.user_name }}
+                    </span>
+                    {% endif %}
+                </div>
+                <button class="btn btn-primary btn-sm"
+                        data-bs-toggle="modal" data-bs-target="#executeRecipeModal{{ recipe_id }}">
+                    <i class="bi bi-check-circle"></i> 一括実行
+                </button>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0" style="font-size:0.875rem;">
+                    <thead>
+                        <tr>
+                            <th>原料</th>
+                            <th>ロット</th>
+                            <th>予約量</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for reservation in group.reservations %}
+                        <tr>
+                            <td>{{ reservation.material.name }}</td>
+                            <td>{{ reservation.lot_name or (reservation.lot.lot_name if reservation.lot else '自動') }}</td>
+                            <td><strong>{{ reservation.quantity }}</strong> {{ reservation.material.unit }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
-        {% endif %}
 
-        <ul class="nav nav-tabs mb-4" id="reservationTab" role="tablist">
-            <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="use-tab" data-bs-toggle="tab" data-bs-target="#use" type="button" role="tab">
-                    <i class="bi bi-arrow-down-circle text-danger"></i> 使用予約 ({{ use_reservations|length }})
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link" id="replenish-tab" data-bs-toggle="tab" data-bs-target="#replenish" type="button" role="tab">
-                    <i class="bi bi-arrow-up-circle text-success"></i> 補充予約 ({{ replenish_reservations|length }})
-                </button>
-            </li>
-        </ul>
-
-        <div class="tab-content" id="reservationTabContent">
-            <!-- 使用予約タブ -->
-            <div class="tab-pane fade show active" id="use" role="tabpanel">
-                <h3 class="mb-3"><i class="bi bi-box-arrow-down text-danger"></i> 使用予約一覧</h3>                
-                {% if recipe_groups %}
-                <!-- レシピ予約グループ -->
-                <h4 class="mb-3 mt-4"><i class="bi bi-journal-text text-info"></i> レシピ予約</h4>
-                {% for recipe_id, group in recipe_groups.items() %}
-                <div class="card mb-4 border-info">
-                    <div class="card-header bg-info text-white">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <h5 class="mb-1">
-                                    <i class="bi bi-journal-text"></i> {{ group.recipe.name }}
-                                </h5>
-                                <small>
-                                    {% if group.scheduled_date %}
-                                    <i class="bi bi-calendar-event"></i> 予定日: {{ group.scheduled_date.strftime('%Y/%m/%d') }}
-                                    {% endif %}
-                                    {% if group.user_name %}
-                                    | <i class="bi bi-person"></i> {{ group.user_name }}
-                                    {% endif %}
-                                    {% if group.purpose %}
-                                    | <i class="bi bi-lightbulb"></i> {{ group.purpose }}
-                                    {% endif %}
-                                </small>
+        <!-- レシピ一括実行モーダル -->
+        <div class="modal fade" id="executeRecipeModal{{ recipe_id }}" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content" style="border-radius:var(--radius);border:none;box-shadow:0 8px 40px rgba(0,0,0,0.15);">
+                    <form method="POST" action="{{ url_for('execute_recipe', recipe_id=recipe_id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="modal-header" style="background:#eff6ff;border-bottom:1px solid #bfdbfe;">
+                            <h5 class="modal-title" style="font-size:1rem;">
+                                <i class="bi bi-journal-text me-1 text-primary"></i>
+                                {{ group.recipe.name }} — 一括実行
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="text-secondary" style="font-size:0.85rem;">各原料のロットと使用量を入力してください（複数ロット選択可）</p>
+                            {% for reservation in group.reservations %}
+                            <div class="card mb-3">
+                                <div class="card-header" style="font-size:0.875rem;">
+                                    <strong>{{ reservation.material.name }}</strong>
+                                    <span class="text-secondary ms-2">予約量: {{ reservation.quantity }} {{ reservation.material.unit }}</span>
+                                </div>
+                                <div class="card-body">
+                                    <div id="lot-rows-{{ reservation.id }}">
+                                        <div class="row g-2 mb-2 lot-row">
+                                            <div class="col-md-6">
+                                                <label class="form-label">ロット <span class="text-danger">*</span></label>
+                                                <select class="form-select form-select-sm"
+                                                        name="lot_id_{{ reservation.id }}_0" required>
+                                                    <option value="">選択してください</option>
+                                                    {% for lot in reservation.material.lots %}
+                                                    {% if not lot.is_fraction %}
+                                                    <option value="{{ lot.id }}">
+                                                        {{ lot.lot_name }} (在庫: {{ "%.3f"|format(lot.weight) }}{{ reservation.material.unit }})
+                                                    </option>
+                                                    {% endif %}
+                                                    {% endfor %}
+                                                </select>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label class="form-label">使用量 <span class="text-danger">*</span></label>
+                                                <div class="input-group input-group-sm">
+                                                    <input type="number" step="0.001" class="form-control"
+                                                           name="lot_quantity_{{ reservation.id }}_0"
+                                                           value="{{ reservation.quantity }}" required>
+                                                    <span class="input-group-text">{{ reservation.material.unit }}</span>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-2 d-flex align-items-end">
+                                                <button type="button" class="btn btn-outline-danger btn-sm w-100"
+                                                        onclick="removeLotRow(this, '{{ reservation.id }}')"
+                                                        style="display:none;">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button type="button" class="btn btn-outline-primary btn-sm"
+                                            onclick="addLotRow('{{ reservation.id }}', '{{ reservation.material.unit }}', [{% for lot in reservation.material.lots %}{% if not lot.is_fraction %}{id:{{ lot.id }},lot_name:'{{ lot.lot_name }}',weight:{{ lot.weight }}}{% if not loop.last %},{% endif %}{% endif %}{% endfor %}])">
+                                        <i class="bi bi-plus-circle"></i> ロット追加
+                                    </button>
+                                </div>
                             </div>
-                            <button type="button" class="btn btn-light btn-sm"
-                                    data-bs-toggle="modal" data-bs-target="#executeRecipeModal{{ recipe_id }}">
+                            {% endfor %}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
+                            <button type="submit" class="btn btn-success">
                                 <i class="bi bi-check-circle"></i> 一括実行
                             </button>
                         </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-sm">
-                                <thead>
-                                    <tr>
-                                        <th>原料</th>
-                                        <th>ロット</th>
-                                        <th>予約量</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for reservation in group.reservations %}
-                                    <tr>
-                                        <td>{{ reservation.material.name }}</td>
-                                        <td>{{ reservation.lot_name or reservation.lot.lot_name if reservation.lot else '自動' }}</td>
-                                        <td>{{ reservation.quantity }} {{ reservation.material.unit }}</td>
-                                    </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                    </form>
                 </div>
-                
-                <!-- レシピ一括実行モーダル -->
-                <div class="modal fade" id="executeRecipeModal{{ recipe_id }}" tabindex="-1">
-                    <div class="modal-dialog modal-lg">
-                        <div class="modal-content">
-                            <form method="POST" action="{{ url_for('execute_recipe', recipe_id=recipe_id) }}">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <div class="modal-header bg-info text-white">
-                                    <h5 class="modal-title">
-                                        <i class="bi bi-journal-text"></i> {{ group.recipe.name }} - 一括実行
-                                    </h5>
-                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                                </div>
-                                <div class="modal-body">
-                                    <p class="text-muted mb-3">各原料のロットと実際の使用量を入力してください：</p>
-                                    <div class="table-responsive">
-                                        <table class="table">
-                                            <thead>
-                                                <tr>
-                                                    <th>原料</th>
-                                                    <th>ロット選択 <span class="text-danger">*</span></th>
-                                                    <th>予約量</th>
-                                                    <th>実際の量</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {% for reservation in group.reservations %}
-                                                <tr>
-                                                    <td>{{ reservation.material.name }}</td>
-                                                    <td>
-                                                        <select class="form-select form-select-sm" 
-                                                                name="lot_id_{{ reservation.id }}" required>
-                                                            <option value="">選択</option>
-                                                            {% for lot in reservation.material.lots %}
-                                                            <option value="{{ lot.id }}">
-                                                                {{ lot.lot_name }} ({{ "%.3f"|format(lot.weight) }}{{ reservation.material.unit }})
-                                                            </option>
-                                                            {% endfor %}
-                                                        </select>
-                                                    </td>
-                                                    <td>{{ reservation.quantity }} {{ reservation.material.unit }}</td>
-                                                    <td>
-                                                        <input type="number" step="0.001" 
-                                                               class="form-control form-control-sm" 
-                                                               name="actual_quantity_{{ reservation.id }}" 
-                                                               value="{{ reservation.quantity }}" 
-                                                               required>
-                                                    </td>
-                                                </tr>
-                                                {% endfor %}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                                <div class="modal-footer">
-                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
-                                    <button type="submit" class="btn btn-success">
-                                        <i class="bi bi-check-circle"></i> 一括実行
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-                {% endfor %}
-                
-                <h4 class="mb-3 mt-4"><i class="bi bi-list-ul"></i> 個別予約</h4>
-                {% endif %}
-                
-                {% if use_reservations %}
-                <div class="row">
-                    {% for reservation in use_reservations %}
-                    {% if not reservation.recipe_id %}
-                    <div class="col-md-6 col-lg-4 mb-3">
-                        <div class="card reservation-card use-card {% if reservation.is_overdue() %}border-warning{% endif %}">
-                            <div class="card-body">
-                                {% if reservation.is_overdue() %}
-                                <span class="badge bg-warning text-dark mb-2">
-                                    <i class="bi bi-clock-history"></i> 期限切れ
-                                </span>
-                                {% endif %}
-                                <h5 class="card-title">
-                                    <i class="bi bi-box"></i> {{ reservation.material.name }}
-                                </h5>
-                                {% if reservation.lot %}
-                                <p class="card-text text-muted mb-2">
-                                    <i class="bi bi-tag"></i> ロット: {{ reservation.lot.lot_name }}
-                                </p>
-                                {% elif reservation.lot_name %}
-                                <p class="card-text text-muted mb-2">
-                                    <i class="bi bi-tag-fill"></i> ロット名: {{ reservation.lot_name }}
-                                </p>
-                                {% endif %}
-                                <p class="card-text">
-                                    <strong class="text-danger">使用予定: {{ reservation.quantity }} {{ reservation.material.unit }}</strong>
-                                </p>
-                                {% if reservation.actual_quantity %}
-                                <p class="card-text">
-                                    <small class="text-muted">
-                                        <i class="bi bi-check-circle"></i> 実際: {{ reservation.actual_quantity }} {{ reservation.material.unit }}
-                                    </small>
-                                </p>
-                                {% endif %}
-                                {% if reservation.user_name %}
-                                <p class="card-text">
-                                    <small class="text-muted">
-                                        <i class="bi bi-person"></i> 使用者: {{ reservation.user_name }}
-                                    </small>
-                                </p>
-                                {% endif %}
-                                {% if reservation.purpose %}
-                                <p class="card-text">
-                                    <small class="text-muted">
-                                        <i class="bi bi-lightbulb"></i> 目的: {{ reservation.purpose }}
-                                    </small>
-                                </p>
-                                {% endif %}
-                                {% if reservation.recipe %}
-                                <p class="card-text">
-                                    <small class="text-info">
-                                        <i class="bi bi-journal-text"></i> レシピ: {{ reservation.recipe.name }}
-                                    </small>
-                                </p>
-                                {% endif %}
-                                {% if reservation.scheduled_date %}
-                                <p class="card-text">
-                                    <small class="{% if reservation.is_overdue() %}text-warning fw-bold{% else %}text-muted{% endif %}">
-                                        <i class="bi bi-calendar-event"></i> 予定日: {{ reservation.scheduled_date.strftime('%Y/%m/%d') }}
-                                    </small>
-                                </p>
-                                {% endif %}
-                                <p class="card-text">
-                                    <small class="text-muted">
-                                        <i class="bi bi-clock"></i> 登録: {{ reservation.date.strftime('%Y/%m/%d %H:%M') if reservation.date else 'N/A' }}
-                                    </small>
-                                </p>
-                                <div class="btn-group" role="group">
-                                    <button type="button" class="btn btn-sm btn-success"
-                                            data-bs-toggle="modal" data-bs-target="#executeModal{{ reservation.id }}">
-                                        <i class="bi bi-check-circle"></i> 実行
-                                    </button>
-                                    <a href="{{ url_for('edit_reservation', id=reservation.id) }}" 
-                                       class="btn btn-sm btn-outline-primary">
-                                        <i class="bi bi-pencil"></i> 編集
-                                    </a>
-                                    <a href="{{ url_for('delete_reservation', id=reservation.id) }}" 
-                                       class="btn btn-sm btn-outline-danger" 
-                                       onclick="return confirm('この予約を削除しますか？')">
-                                        <i class="bi bi-trash"></i> 削除
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    {% endif %}
-                    {% endfor %}
-                </div>
+            </div>
+        </div>
+        {% endfor %}
 
-                <!-- 実行モーダル（個別予約のみ） -->
-                {% for reservation in use_reservations %}
-                {% if not reservation.recipe_id %}
-                <div class="modal fade" id="executeModal{{ reservation.id }}" tabindex="-1">
-                    <div class="modal-dialog">
-                        <div class="modal-content">
-                            <form method="POST" action="{{ url_for('execute_reservation', id=reservation.id) }}">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <div class="modal-header">
-                                    <h5 class="modal-title">予約を実行</h5>
-                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                </div>
-                                <div class="modal-body">
-                                    <p><strong>{{ reservation.material.name }}</strong></p>
-                                    <p>予約量: {{ reservation.quantity }} {{ reservation.material.unit }}</p>
-                                    <div class="mb-3">
-                                        <label for="lot_id{{ reservation.id }}" class="form-label">ロット選択 <span class="text-danger">*</span></label>
-                                        <select class="form-select" id="lot_id{{ reservation.id }}" name="lot_id" required>
-                                            <option value="">-- ロットを選択 --</option>
+        {% if use_reservations|selectattr('recipe_id', 'none')|list %}
+        <h6 class="text-secondary fw-bold mb-3 mt-4" style="text-transform:uppercase;letter-spacing:0.06em;font-size:0.72rem;">
+            <i class="bi bi-list-ul me-1"></i>個別予約
+        </h6>
+        {% endif %}
+        {% endif %}
+
+        {% if use_reservations %}
+        <div class="row g-3">
+            {% for reservation in use_reservations %}
+            {% if not reservation.recipe_id %}
+            <div class="col-md-6 col-xl-4">
+                <div class="res-card use-card {% if reservation.is_overdue() %}overdue-card{% endif %}">
+                    {% if reservation.is_overdue() %}
+                    <span class="badge bg-warning text-dark mb-2">
+                        <i class="bi bi-clock-history"></i> 期限切れ
+                    </span>
+                    {% endif %}
+                    <div class="res-title">
+                        <i class="bi bi-box-seam text-danger me-1"></i>{{ reservation.material.name }}
+                    </div>
+                    <div class="res-qty text-danger mb-2">−{{ reservation.quantity }} {{ reservation.material.unit }}</div>
+                    <div class="res-meta">
+                        {% if reservation.lot %}
+                        <div><i class="bi bi-tag me-1"></i>ロット: {{ reservation.lot.lot_name }}</div>
+                        {% elif reservation.lot_name %}
+                        <div><i class="bi bi-tag me-1"></i>{{ reservation.lot_name }}</div>
+                        {% endif %}
+                        {% if reservation.user_name %}<div><i class="bi bi-person me-1"></i>{{ reservation.user_name }}</div>{% endif %}
+                        {% if reservation.purpose %}<div><i class="bi bi-lightbulb me-1"></i>{{ reservation.purpose }}</div>{% endif %}
+                        {% if reservation.scheduled_date %}
+                        <div class="{% if reservation.is_overdue() %}text-warning fw-bold{% endif %}">
+                            <i class="bi bi-calendar-event me-1"></i>{{ reservation.scheduled_date.strftime('%Y/%m/%d') }}
+                        </div>
+                        {% endif %}
+                        <div><i class="bi bi-clock me-1"></i>{{ reservation.date.strftime('%Y/%m/%d') if reservation.date else 'N/A' }}</div>
+                    </div>
+                    <div class="d-flex gap-1 mt-3 flex-wrap">
+                        <button class="btn btn-success btn-sm"
+                                data-bs-toggle="modal" data-bs-target="#executeModal{{ reservation.id }}">
+                            <i class="bi bi-check-circle"></i> 実行
+                        </button>
+                        <a href="{{ url_for('edit_reservation', id=reservation.id) }}"
+                           class="btn btn-outline-secondary btn-sm">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        <a href="{{ url_for('delete_reservation', id=reservation.id) }}"
+                           class="btn btn-outline-danger btn-sm"
+                           onclick="return confirm('この予約を削除しますか？')">
+                            <i class="bi bi-trash"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+
+        <!-- 実行モーダル（個別使用） -->
+        {% for reservation in use_reservations %}
+        {% if not reservation.recipe_id %}
+        <div class="modal fade" id="executeModal{{ reservation.id }}" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content" style="border-radius:var(--radius);border:none;box-shadow:0 8px 40px rgba(0,0,0,0.15);">
+                    <form method="POST" action="{{ url_for('execute_reservation', id=reservation.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="modal-header">
+                            <h5 class="modal-title" style="font-size:1rem;">
+                                <i class="bi bi-check-circle me-1 text-success"></i>予約実行
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3 p-3" style="background:#f8fafc;border-radius:8px;">
+                                <div style="font-weight:600;">{{ reservation.material.name }}</div>
+                                <div style="color:var(--text-secondary);font-size:0.85rem;">予約量: {{ reservation.quantity }} {{ reservation.material.unit }}</div>
+                            </div>
+                            <p class="text-secondary" style="font-size:0.85rem;">使用するロットと数量を入力してください（複数ロット可）</p>
+                            <div id="lot-rows-single-{{ reservation.id }}">
+                                <div class="row g-2 mb-2 lot-row">
+                                    <div class="col-md-6">
+                                        <label class="form-label">ロット <span class="text-danger">*</span></label>
+                                        <select class="form-select form-select-sm" name="lot_id_0" required>
+                                            <option value="">選択してください</option>
                                             {% for lot in reservation.material.lots %}
-                                            <option value="{{ lot.id }}" {% if reservation.lot_id == lot.id %}selected{% endif %}>
-                                                {{ lot.lot_name }} (在庫: {{ "%.3f"|format(lot.weight) }} {{ reservation.material.unit }})
+                                            {% if not lot.is_fraction %}
+                                            <option value="{{ lot.id }}">
+                                                {{ lot.lot_name }} (在庫: {{ "%.3f"|format(lot.weight) }}{{ reservation.material.unit }})
                                             </option>
+                                            {% endif %}
                                             {% endfor %}
                                         </select>
                                     </div>
-                                    <div class="mb-3">
-                                        <label for="actual_quantity{{ reservation.id }}" class="form-label">実際の量</label>
-                                        <input type="number" step="0.001" class="form-control" 
-                                               id="actual_quantity{{ reservation.id }}" name="actual_quantity" 
-                                               value="{{ reservation.quantity }}" required>
+                                    <div class="col-md-4">
+                                        <label class="form-label">使用量 <span class="text-danger">*</span></label>
+                                        <div class="input-group input-group-sm">
+                                            <input type="number" step="0.001" class="form-control"
+                                                   name="lot_quantity_0" value="{{ reservation.quantity }}" required>
+                                            <span class="input-group-text">{{ reservation.material.unit }}</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-2 d-flex align-items-end">
+                                        <button type="button" class="btn btn-outline-danger btn-sm w-100"
+                                                onclick="removeSingleLotRow(this, '{{ reservation.id }}')"
+                                                style="display:none;"><i class="bi bi-trash"></i></button>
                                     </div>
                                 </div>
-                                <div class="modal-footer">
-                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
-                                    <button type="submit" class="btn btn-success">実行</button>
-                                </div>
-                            </form>
+                            </div>
+                            <button type="button" class="btn btn-outline-primary btn-sm"
+                                    onclick="addSingleLotRow('{{ reservation.id }}', '{{ reservation.material.unit }}', [{% for lot in reservation.material.lots %}{% if not lot.is_fraction %}{id:{{ lot.id }},lot_name:'{{ lot.lot_name }}',weight:{{ lot.weight }}}{% if not loop.last %},{% endif %}{% endif %}{% endfor %}])">
+                                <i class="bi bi-plus-circle"></i> ロット追加
+                            </button>
                         </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
+                            <button type="submit" class="btn btn-success">
+                                <i class="bi bi-check-circle"></i> 実行
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+
+        {% else %}
+        <div style="text-align:center;padding:48px;color:var(--text-secondary);">
+            <i class="bi bi-calendar-x" style="font-size:2.5rem;display:block;margin-bottom:12px;opacity:0.3;"></i>
+            使用予約はありません
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- 補充予約タブ -->
+    <div class="tab-pane fade" id="replenishTab">
+        {% if replenish_reservations %}
+        <div class="row g-3">
+            {% for reservation in replenish_reservations %}
+            <div class="col-md-6 col-xl-4">
+                <div class="res-card replenish-card {% if reservation.is_overdue() %}overdue-card{% endif %}">
+                    {% if reservation.is_overdue() %}
+                    <span class="badge bg-warning text-dark mb-2">
+                        <i class="bi bi-clock-history"></i> 期限切れ
+                    </span>
+                    {% endif %}
+                    <div class="res-title">
+                        <i class="bi bi-box-seam text-success me-1"></i>{{ reservation.material.name }}
+                    </div>
+                    <div class="res-qty text-success mb-2">+{{ reservation.quantity }} {{ reservation.material.unit }}</div>
+                    <div class="res-meta">
+                        {% if reservation.lot_name %}<div><i class="bi bi-tag me-1"></i>{{ reservation.lot_name }}</div>{% endif %}
+                        {% if reservation.user_name %}<div><i class="bi bi-person me-1"></i>{{ reservation.user_name }}</div>{% endif %}
+                        {% if reservation.purpose %}<div><i class="bi bi-lightbulb me-1"></i>{{ reservation.purpose }}</div>{% endif %}
+                        {% if reservation.scheduled_date %}
+                        <div class="{% if reservation.is_overdue() %}text-warning fw-bold{% endif %}">
+                            <i class="bi bi-calendar-event me-1"></i>{{ reservation.scheduled_date.strftime('%Y/%m/%d') }}
+                        </div>
+                        {% endif %}
+                        <div><i class="bi bi-clock me-1"></i>{{ reservation.date.strftime('%Y/%m/%d') if reservation.date else 'N/A' }}</div>
+                    </div>
+                    <div class="d-flex gap-1 mt-3 flex-wrap">
+                        <button class="btn btn-success btn-sm"
+                                data-bs-toggle="modal"
+                                data-bs-target="#executeReplenishModal{{ reservation.id }}">
+                            <i class="bi bi-check-circle"></i> 実行
+                        </button>
+                        <a href="{{ url_for('edit_reservation', id=reservation.id) }}"
+                           class="btn btn-outline-secondary btn-sm">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                        <a href="{{ url_for('delete_reservation', id=reservation.id) }}"
+                           class="btn btn-outline-danger btn-sm"
+                           onclick="return confirm('この予約を削除しますか？')">
+                            <i class="bi bi-trash"></i>
+                        </a>
                     </div>
                 </div>
-                {% endif %}
-                {% endfor %}
-
-                {% else %}
-                <div class="alert alert-info">
-                    <i class="bi bi-info-circle"></i> 使用予約はありません
-                </div>
-                {% endif %}
             </div>
+            {% endfor %}
+        </div>
 
-            <!-- 補充予約タブ -->
-            <div class="tab-pane fade" id="replenish" role="tabpanel">
-                <h3 class="mb-3"><i class="bi bi-box-arrow-in-down text-success"></i> 補充予約一覧</h3>
-                {% if replenish_reservations %}
-                <div class="row">
-                    {% for reservation in replenish_reservations %}
-                    <div class="col-md-6 col-lg-4 mb-3">
-                        <div class="card reservation-card replenish-card {% if reservation.is_overdue() %}border-warning{% endif %}">
-                            <div class="card-body">
-                                {% if reservation.is_overdue() %}
-                                <span class="badge bg-warning text-dark mb-2">
-                                    <i class="bi bi-clock-history"></i> 期限切れ
-                                </span>
-                                {% endif %}
-                                <h5 class="card-title">
-                                    <i class="bi bi-box"></i> {{ reservation.material.name }}
-                                </h5>
-                                {% if reservation.lot %}
-                                <p class="card-text text-muted mb-2">
-                                    <i class="bi bi-tag"></i> ロット: {{ reservation.lot.lot_name }}
-                                </p>
-                                {% elif reservation.lot_name %}
-                                <p class="card-text text-muted mb-2">
-                                    <i class="bi bi-tag-fill"></i> 新規ロット名: {{ reservation.lot_name }}
-                                </p>
-                                {% endif %}
-                                <p class="card-text">
-                                    <strong class="text-success">補充予定: {{ reservation.quantity }} {{ reservation.material.unit }}</strong>
-                                </p>
-                                {% if reservation.actual_quantity %}
-                                <p class="card-text">
-                                    <small class="text-muted">
-                                        <i class="bi bi-check-circle"></i> 実際: {{ reservation.actual_quantity }} {{ reservation.material.unit }}
-                                    </small>
-                                </p>
-                                {% endif %}
-                                {% if reservation.user_name %}
-                                <p class="card-text">
-                                    <small class="text-muted">
-                                        <i class="bi bi-person"></i> 担当者: {{ reservation.user_name }}
-                                    </small>
-                                </p>
-                                {% endif %}
-                                {% if reservation.purpose %}
-                                <p class="card-text">
-                                    <small class="text-muted">
-                                        <i class="bi bi-lightbulb"></i> 目的: {{ reservation.purpose }}
-                                    </small>
-                                </p>
-                                {% endif %}
-                                {% if reservation.scheduled_date %}
-                                <p class="card-text">
-                                    <small class="{% if reservation.is_overdue() %}text-warning fw-bold{% else %}text-muted{% endif %}">
-                                        <i class="bi bi-calendar-event"></i> 予定日: {{ reservation.scheduled_date.strftime('%Y/%m/%d') }}
-                                    </small>
-                                </p>
-                                {% endif %}
-                                <p class="card-text">
-                                    <small class="text-muted">
-                                        <i class="bi bi-clock"></i> 登録: {{ reservation.date.strftime('%Y/%m/%d %H:%M') if reservation.date else 'N/A' }}
-                                    </small>
-                                </p>
-                                <div class="btn-group" role="group">
-                                    <button type="button" class="btn btn-sm btn-success"
-                                            data-bs-toggle="modal" 
-                                            data-bs-target="#executeReplenishModal{{ reservation.id }}">
-                                        <i class="bi bi-check-circle"></i> 実行
-                                    </button>
-                                    <a href="{{ url_for('edit_reservation', id=reservation.id) }}" 
-                                       class="btn btn-sm btn-outline-primary">
-                                        <i class="bi bi-pencil"></i> 編集
-                                    </a>
-                                    <a href="{{ url_for('delete_reservation', id=reservation.id) }}" 
-                                       class="btn btn-sm btn-outline-danger" 
-                                       onclick="return confirm('この予約を削除しますか？')">
-                                        <i class="bi bi-trash"></i> 削除
-                                    </a>
+        <!-- 補充実行モーダル -->
+        {% for reservation in replenish_reservations %}
+        <div class="modal fade" id="executeReplenishModal{{ reservation.id }}" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content" style="border-radius:var(--radius);border:none;box-shadow:0 8px 40px rgba(0,0,0,0.15);">
+                    <form method="POST" action="{{ url_for('execute_reservation', id=reservation.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="modal-header">
+                            <h5 class="modal-title" style="font-size:1rem;">
+                                <i class="bi bi-check-circle me-1 text-success"></i>補充予約実行
+                            </h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3 p-3" style="background:#f8fafc;border-radius:8px;">
+                                <div style="font-weight:600;">{{ reservation.material.name }}</div>
+                                <div style="color:var(--text-secondary);font-size:0.85rem;">予約量: {{ reservation.quantity }} {{ reservation.material.unit }}</div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">ロット名 <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" name="lot_name"
+                                       value="{{ reservation.lot_name or '' }}"
+                                       placeholder="例: ロットA-001" required>
+                                <div class="form-text">補充するロット名を入力してください</div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">実際の補充量</label>
+                                <div class="input-group">
+                                    <input type="number" step="0.001" class="form-control"
+                                           name="actual_quantity" value="{{ reservation.quantity }}" required>
+                                    <span class="input-group-text">{{ reservation.material.unit }}</span>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                    {% endfor %}
-                </div>
-
-                <!-- 実行モーダル -->
-                {% for reservation in replenish_reservations %}
-                <div class="modal fade" id="executeReplenishModal{{ reservation.id }}" tabindex="-1">
-                    <div class="modal-dialog">
-                        <div class="modal-content">
-                            <form method="POST" action="{{ url_for('execute_reservation', id=reservation.id) }}">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <div class="modal-header">
-                                    <h5 class="modal-title">予約を実行</h5>
-                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                </div>
-                                <div class="modal-body">
-                                    <p><strong>{{ reservation.material.name }}</strong></p>
-                                    <p>予約量: {{ reservation.quantity }} {{ reservation.material.unit }}</p>
-                                    <div class="mb-3">
-                                        <label for="lot_name_r{{ reservation.id }}" class="form-label">ロット名 <span class="text-danger">*</span></label>
-                                        <input type="text" class="form-control" 
-                                               id="lot_name_r{{ reservation.id }}" name="lot_name" 
-                                               value="{{ reservation.lot_name or '' }}" 
-                                               placeholder="例: ロットA" required>
-                                        <small class="form-text text-muted">補充するロットの名前を入力してください</small>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="actual_quantity_r{{ reservation.id }}" class="form-label">実際の量</label>
-                                        <input type="number" step="0.001" class="form-control" 
-                                               id="actual_quantity_r{{ reservation.id }}" name="actual_quantity" 
-                                               value="{{ reservation.quantity }}" required>
-                                    </div>
-                                </div>
-                                <div class="modal-footer">
-                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">キャンセル</button>
-                                    <button type="submit" class="btn btn-success">実行</button>
-                                </div>
-                            </form>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">キャンセル</button>
+                            <button type="submit" class="btn btn-success">
+                                <i class="bi bi-check-circle"></i> 実行
+                            </button>
                         </div>
-                    </div>
+                    </form>
                 </div>
-                {% endfor %}
-
-                {% else %}
-                <div class="alert alert-info">
-                    <i class="bi bi-info-circle"></i> 補充予約はありません
-                </div>
-                {% endif %}
             </div>
         </div>
+        {% endfor %}
+
+        {% else %}
+        <div style="text-align:center;padding:48px;color:var(--text-secondary);">
+            <i class="bi bi-calendar-x" style="font-size:2.5rem;display:block;margin-bottom:12px;opacity:0.3;"></i>
+            補充予約はありません
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const lotRowCounters = {};
+const singleLotRowCounters = {};
+
+function buildLotOptions(lots, unit) {
+    return lots.map(lot => `<option value="${lot.id}">${lot.lot_name} (在庫: ${parseFloat(lot.weight).toFixed(3)}${unit})</option>`).join('');
+}
+
+function addLotRow(reservationId, unit, lots) {
+    lotRowCounters[reservationId] = (lotRowCounters[reservationId] || 0) + 1;
+    const idx = lotRowCounters[reservationId];
+    const container = document.getElementById('lot-rows-' + reservationId);
+    const row = document.createElement('div');
+    row.className = 'row g-2 mb-2 lot-row';
+    row.innerHTML = `
+        <div class="col-md-6">
+            <select class="form-select form-select-sm" name="lot_id_${reservationId}_${idx}" required>
+                <option value="">選択してください</option>${buildLotOptions(lots, unit)}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <div class="input-group input-group-sm">
+                <input type="number" step="0.001" class="form-control" name="lot_quantity_${reservationId}_${idx}" required>
+                <span class="input-group-text">${unit}</span>
+            </div>
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+            <button type="button" class="btn btn-outline-danger btn-sm w-100" onclick="removeLotRow(this,'${reservationId}')">
+                <i class="bi bi-trash"></i>
+            </button>
+        </div>`;
+    container.appendChild(row);
+    updateDeleteButtons('lot-rows-' + reservationId);
+}
+
+function removeLotRow(btn, reservationId) {
+    const container = document.getElementById('lot-rows-' + reservationId);
+    if (container.querySelectorAll('.lot-row').length > 1) {
+        btn.closest('.lot-row').remove();
+        updateDeleteButtons('lot-rows-' + reservationId);
+    }
+}
+
+function addSingleLotRow(reservationId, unit, lots) {
+    singleLotRowCounters[reservationId] = (singleLotRowCounters[reservationId] || 0) + 1;
+    const idx = singleLotRowCounters[reservationId];
+    const container = document.getElementById('lot-rows-single-' + reservationId);
+    const row = document.createElement('div');
+    row.className = 'row g-2 mb-2 lot-row';
+    row.innerHTML = `
+        <div class="col-md-6">
+            <select class="form-select form-select-sm" name="lot_id_${idx}" required>
+                <option value="">選択してください</option>${buildLotOptions(lots, unit)}
+            </select>
+        </div>
+        <div class="col-md-4">
+            <div class="input-group input-group-sm">
+                <input type="number" step="0.001" class="form-control" name="lot_quantity_${idx}" required>
+                <span class="input-group-text">${unit}</span>
+            </div>
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+            <button type="button" class="btn btn-outline-danger btn-sm w-100" onclick="removeSingleLotRow(this,'${reservationId}')">
+                <i class="bi bi-trash"></i>
+            </button>
+        </div>`;
+    container.appendChild(row);
+    updateDeleteButtons('lot-rows-single-' + reservationId);
+}
+
+function removeSingleLotRow(btn, reservationId) {
+    const container = document.getElementById('lot-rows-single-' + reservationId);
+    if (container.querySelectorAll('.lot-row').length > 1) {
+        btn.closest('.lot-row').remove();
+        updateDeleteButtons('lot-rows-single-' + reservationId);
+    }
+}
+
+function updateDeleteButtons(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const rows = container.querySelectorAll('.lot-row');
+    container.querySelectorAll('.btn-outline-danger').forEach(btn => {
+        btn.style.display = rows.length === 1 ? 'none' : '';
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('[id^="lot-rows-"]').forEach(el => {
+        updateDeleteButtons(el.id);
+    });
+});
+</script>
 {% endblock %}

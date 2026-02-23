@@ -1,0 +1,591 @@
+{% extends "base.html" %}
+
+{% block title %}作業カレンダー - 在庫管理システム{% endblock %}
+{% block page_title %}作業カレンダー{% endblock %}
+
+{% block topbar_actions %}
+<a href="{{ url_for('add_work_order') }}" class="btn btn-primary btn-sm">
+    <i class="bi bi-plus-lg"></i> 新規作業追加
+</a>
+<a href="{{ url_for('work_orders') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="bi bi-list-ul"></i> 作業一覧
+</a>
+{% endblock %}
+
+{% block extra_style %}
+/* ===== カレンダー制御バー ===== */
+.cal-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.cal-nav-btn {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 1rem;
+    transition: background 0.15s;
+}
+.cal-nav-btn:hover { background: #f1f5f9; }
+.cal-month-title {
+    font-size: 1.1rem; font-weight: 700; color: var(--text-primary);
+    min-width: 140px; text-align: center;
+}
+.view-toggle .btn { font-size: 0.8rem; }
+
+/* ===== Ganttビュー ===== */
+.gantt-wrap {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    overflow: auto;
+}
+
+.gantt-table {
+    border-collapse: collapse;
+    min-width: 100%;
+    font-size: 0.82rem;
+}
+
+.gantt-table th, .gantt-table td {
+    border: 1px solid #e2e8f0;
+    padding: 0;
+    white-space: nowrap;
+}
+
+.gantt-row-header {
+    background: #f8fafc;
+    position: sticky; left: 0; z-index: 2;
+    padding: 8px 14px;
+    font-weight: 600;
+    min-width: 120px;
+    color: var(--text-primary);
+    border-right: 2px solid #cbd5e1;
+}
+
+.gantt-col-header {
+    background: #f8fafc;
+    text-align: center;
+    padding: 4px 0;
+    min-width: 32px;
+    width: 32px;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    position: sticky; top: 0; z-index: 1;
+}
+.gantt-col-header.today { background: #eff6ff; color: #2563eb; font-weight: 700; }
+.gantt-col-header.weekend { background: #f8f8f8; color: #94a3b8; }
+
+.gantt-cell {
+    position: relative;
+    height: 36px;
+    min-width: 32px; width: 32px;
+    vertical-align: top;
+    padding: 0;
+}
+.gantt-cell.today { background: rgba(37,99,235,0.04); }
+.gantt-cell.weekend { background: #fafafa; }
+
+/* 作業バー */
+.gantt-bar {
+    position: absolute;
+    top: 6px;
+    left: 1px; right: 1px;
+    height: 22px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding: 0 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #fff;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    z-index: 1;
+    transition: filter 0.15s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+.gantt-bar:hover { filter: brightness(0.9); }
+
+/* バー：開始セルのみにラベル表示 */
+.gantt-bar.bar-start { border-radius: 4px 0 0 4px; }
+.gantt-bar.bar-end   { border-radius: 0 4px 4px 0; }
+.gantt-bar.bar-single { border-radius: 4px; }
+.gantt-bar.bar-mid   { border-radius: 0; }
+
+/* ステータス別のストライプ（完了は少し薄く） */
+.bar-completed { opacity: 0.6; }
+
+/* ===== カレンダービュー（月） ===== */
+.month-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 1px;
+    background: var(--border-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+.month-dow {
+    background: #f8fafc;
+    text-align: center;
+    padding: 6px 0;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.month-dow.sat { color: #2563eb; }
+.month-dow.sun { color: #dc2626; }
+
+.month-cell {
+    background: var(--card-bg);
+    min-height: 90px;
+    padding: 4px;
+    vertical-align: top;
+}
+.month-cell.other-month { background: #f8fafc; opacity: 0.6; }
+.month-cell.today .day-num { background: #2563eb; color: #fff; border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
+.day-num { font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 2px; display: inline-block; width: 22px; text-align: center; }
+.month-cell.sat .day-num { color: #2563eb; }
+.month-cell.sun .day-num { color: #dc2626; }
+
+.month-event {
+    font-size: 0.7rem;
+    font-weight: 600;
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-bottom: 2px;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    text-shadow: 0 1px 1px rgba(0,0,0,0.2);
+}
+.month-event:hover { filter: brightness(0.9); }
+
+/* ===== トップ：凡例 ===== */
+.worker-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+.legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+/* ===== ツールチップ ===== */
+.wo-tooltip {
+    position: fixed;
+    background: #1e293b;
+    color: #f8fafc;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    z-index: 9999;
+    pointer-events: none;
+    max-width: 260px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    display: none;
+}
+{% endblock %}
+
+{% block content %}
+<!-- カレンダー制御 -->
+<div class="cal-header">
+    <button class="cal-nav-btn" onclick="prevMonth()"><i class="bi bi-chevron-left"></i></button>
+    <div class="cal-month-title" id="monthTitle">読み込み中…</div>
+    <button class="cal-nav-btn" onclick="nextMonth()"><i class="bi bi-chevron-right"></i></button>
+    <button class="btn btn-outline-secondary btn-sm" onclick="goToday()">
+        <i class="bi bi-calendar-event me-1"></i>今月
+    </button>
+    <div class="view-toggle btn-group ms-2">
+        <button class="btn btn-outline-secondary active" id="btnGantt" onclick="setView('gantt')">
+            <i class="bi bi-bar-chart-steps"></i> Gantt
+        </button>
+        <button class="btn btn-outline-secondary" id="btnMonth" onclick="setView('month')">
+            <i class="bi bi-calendar3"></i> 月
+        </button>
+    </div>
+</div>
+
+<!-- 作業者凡例 -->
+<div class="worker-legend" id="workerLegend"></div>
+
+<!-- Ganttビュー -->
+<div id="ganttView">
+    <div class="gantt-wrap">
+        <table class="gantt-table">
+            <thead id="ganttHead"></thead>
+            <tbody id="ganttBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 月カレンダービュー -->
+<div id="monthView" style="display:none;">
+    <div class="month-grid" id="monthGrid"></div>
+</div>
+
+<!-- ツールチップ -->
+<div class="wo-tooltip" id="woTooltip"></div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const TODAY = new Date();
+TODAY.setHours(0,0,0,0);
+
+let currentYear = TODAY.getFullYear();
+let currentMonth = TODAY.getMonth(); // 0-indexed
+let currentView = 'gantt';
+let allWorkOrders = [];
+
+// 作業者カラーパレット
+const COLOR_PALETTE = [
+    '#2563eb','#16a34a','#d97706','#7c3aed','#dc2626',
+    '#0891b2','#9333ea','#c2410c','#15803d','#1d4ed8',
+    '#b45309','#be185d','#0f766e','#6d28d9','#b91c1c'
+];
+const workerColorMap = {};
+let colorIdx = 0;
+
+function getWorkerColor(name) {
+    const key = name || '未割当';
+    if (!workerColorMap[key]) {
+        workerColorMap[key] = COLOR_PALETTE[colorIdx % COLOR_PALETTE.length];
+        colorIdx++;
+    }
+    return workerColorMap[key];
+}
+
+function escHtml(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function parseDate(s) {
+    if (!s) return null;
+    const [y,m,d] = s.split('-').map(Number);
+    const dt = new Date(y, m-1, d);
+    dt.setHours(0,0,0,0);
+    return dt;
+}
+
+function dateToStr(dt) {
+    return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+}
+
+function addDays(dt, n) {
+    const d = new Date(dt); d.setDate(d.getDate() + n); return d;
+}
+
+// ===== Ganttビュー =====
+function renderGantt(workOrders) {
+    const year = currentYear, month = currentMonth;
+    const daysInMonth = new Date(year, month+1, 0).getDate();
+    const monthStart = new Date(year, month, 1);
+    const monthEnd   = new Date(year, month, daysInMonth);
+
+    // 作業者ごとにグループ
+    const groups = {};
+    workOrders.forEach(wo => {
+        const start = parseDate(wo.planned_start);
+        const end   = parseDate(wo.planned_end);
+        if (!start && !end) return;
+        // この月に重なっているか
+        const woEnd   = end   || start;
+        const woStart = start || end;
+        if (woEnd < monthStart || woStart > monthEnd) return;
+        const key = wo.worker_name || '未割当';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(wo);
+    });
+
+    // ヘッダー行
+    const DOW = ['日','月','火','水','木','金','土'];
+    let headHTML = '<tr><th class="gantt-row-header" style="min-width:130px;">作業者</th>';
+    for (let d = 1; d <= daysInMonth; d++) {
+        const dt = new Date(year, month, d);
+        const dow = dt.getDay();
+        const isToday = (dateToStr(dt) === dateToStr(TODAY));
+        const isWknd  = (dow === 0 || dow === 6);
+        headHTML += `<th class="gantt-col-header${isToday?' today':''}${isWknd?' weekend':''}" title="${d}日(${DOW[dow]})">
+            <div>${d}</div><div style="font-size:0.65rem;">${DOW[dow]}</div>
+        </th>`;
+    }
+    headHTML += '</tr>';
+    document.getElementById('ganttHead').innerHTML = headHTML;
+
+    // データ行
+    let bodyHTML = '';
+    const workerKeys = Object.keys(groups).sort();
+    if (workerKeys.length === 0) {
+        bodyHTML = `<tr><td colspan="${daysInMonth+1}" style="padding:40px;text-align:center;color:var(--text-secondary);">
+            <i class="bi bi-calendar-x" style="font-size:1.5rem;display:block;margin-bottom:8px;opacity:0.3;"></i>
+            この月に予定されている作業はありません
+        </td></tr>`;
+    }
+
+    workerKeys.forEach(worker => {
+        const wos = groups[worker];
+        const color = getWorkerColor(worker);
+
+        // 各WOのd列幅を計算
+        let rowHTML = `<tr>
+            <td class="gantt-row-header">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="width:10px;height:10px;border-radius:3px;background:${color};display:inline-block;flex-shrink:0;"></span>
+                    <span>${escHtml(worker)}</span>
+                </div>
+            </td>`;
+
+        for (let d = 1; d <= daysInMonth; d++) {
+            const dt = new Date(year, month, d);
+            const isToday = (dateToStr(dt) === dateToStr(TODAY));
+            const dow = dt.getDay();
+            const isWknd = (dow === 0 || dow === 6);
+            rowHTML += `<td class="gantt-cell${isToday?' today':''}${isWknd?' weekend':''}" id="gc_${worker.replace(/\W/g,'_')}_${d}"></td>`;
+        }
+        rowHTML += '</tr>';
+        bodyHTML += rowHTML;
+    });
+
+    document.getElementById('ganttBody').innerHTML = bodyHTML;
+
+    // バーを描画
+    workerKeys.forEach(worker => {
+        const wos = groups[worker];
+        const color = getWorkerColor(worker);
+        const workerKey = worker.replace(/\W/g,'_');
+
+        wos.forEach(wo => {
+            const woStart = parseDate(wo.planned_start) || parseDate(wo.planned_end);
+            const woEnd   = parseDate(wo.planned_end)   || parseDate(wo.planned_start);
+            if (!woStart) return;
+
+            // クランプ this month
+            const dispStart = woStart < monthStart ? monthStart : woStart;
+            const dispEnd   = woEnd   > monthEnd   ? monthEnd   : woEnd;
+
+            const startDay = dispStart.getDate();
+            const endDay   = dispEnd.getDate();
+            const span     = endDay - startDay + 1; // セル数
+
+            // 最初のセルに絶対配置バーを挿入
+            const cellId = `gc_${workerKey}_${startDay}`;
+            const cell = document.getElementById(cellId);
+            if (!cell) return;
+
+            const cellW = 32; // px
+            const barW  = cellW * span - 2;
+
+            const isStart  = (woStart >= monthStart);
+            const isEnd    = (woEnd   <= monthEnd);
+            let radiusClass = 'bar-mid';
+            if (isStart && isEnd) radiusClass = 'bar-single';
+            else if (isStart)     radiusClass = 'bar-start';
+            else if (isEnd)       radiusClass = 'bar-end';
+
+            const completedClass = wo.status === 'completed' ? ' bar-completed' : '';
+            const label = span >= 3 ? escHtml(wo.process_name) : '';
+
+            const bar = document.createElement('div');
+            bar.className = `gantt-bar ${radiusClass}${completedClass}`;
+            bar.style.cssText = `background:${color};width:${barW}px;`;
+            bar.innerHTML = label;
+            bar.dataset.woId = wo.id;
+            bar.addEventListener('mouseenter', (e) => showTooltip(e, wo));
+            bar.addEventListener('mousemove',  (e) => moveTooltip(e));
+            bar.addEventListener('mouseleave', hideTooltip);
+            bar.addEventListener('click', () => { window.location = `/work_orders/edit/${wo.id}`; });
+            cell.style.position = 'relative';
+            cell.appendChild(bar);
+        });
+    });
+}
+
+// ===== 月カレンダービュー =====
+function renderMonth(workOrders) {
+    const year = currentYear, month = currentMonth;
+    const daysInMonth = new Date(year, month+1, 0).getDate();
+    const firstDow = new Date(year, month, 1).getDay();
+    const prevDays = new Date(year, month, 0).getDate();
+    const DOW_LABELS = ['日','月','火','水','木','金','土'];
+
+    let html = '';
+    // ヘッダー
+    DOW_LABELS.forEach((d, i) => {
+        const cls = i===0?'sun':i===6?'sat':'';
+        html += `<div class="month-dow ${cls}">${d}</div>`;
+    });
+
+    // 前月埋め
+    for (let i = firstDow - 1; i >= 0; i--) {
+        html += `<div class="month-cell other-month"><span class="day-num">${prevDays - i}</span></div>`;
+    }
+
+    // この月のイベントを日付ごとにまとめる
+    const dayEvents = {};
+    workOrders.forEach(wo => {
+        const start = parseDate(wo.planned_start) || parseDate(wo.planned_end);
+        const end   = parseDate(wo.planned_end)   || parseDate(wo.planned_start);
+        if (!start) return;
+        let cur = new Date(start);
+        while (cur <= end) {
+            if (cur.getFullYear() === year && cur.getMonth() === month) {
+                const d = cur.getDate();
+                if (!dayEvents[d]) dayEvents[d] = [];
+                dayEvents[d].push(wo);
+            }
+            cur = addDays(cur, 1);
+        }
+    });
+
+    // この月の日セル
+    for (let d = 1; d <= daysInMonth; d++) {
+        const dt = new Date(year, month, d);
+        const dow = dt.getDay();
+        const isTodayCell = (dateToStr(dt) === dateToStr(TODAY));
+        const isWknd = (dow === 0 || dow === 6);
+        const cls = [
+            'month-cell',
+            isTodayCell?'today':'',
+            dow===0?'sun':dow===6?'sat':'',
+        ].filter(Boolean).join(' ');
+
+        let eventsHTML = '';
+        const evs = (dayEvents[d] || []).slice(0, 3);
+        evs.forEach(wo => {
+            const color = getWorkerColor(wo.worker_name || '未割当');
+            const label = wo.worker_name ? `${wo.worker_name}: ${wo.process_name}` : wo.process_name;
+            eventsHTML += `<div class="month-event" style="background:${color};"
+                data-wo-id="${wo.id}"
+                onclick="window.location='/work_orders/edit/${wo.id}'"
+                onmouseenter="showTooltipById(event,${wo.id})" onmousemove="moveTooltip(event)" onmouseleave="hideTooltip()"
+                title="${escHtml(label)}">${escHtml(label)}</div>`;
+        });
+        if ((dayEvents[d]||[]).length > 3) {
+            eventsHTML += `<div style="font-size:0.7rem;color:var(--text-secondary);padding:1px 4px;">+${(dayEvents[d].length-3)}件</div>`;
+        }
+
+        html += `<div class="${cls}"><span class="day-num">${d}</span>${eventsHTML}</div>`;
+    }
+
+    // 翌月埋め
+    const totalCells = firstDow + daysInMonth;
+    const remainder = totalCells % 7;
+    if (remainder !== 0) {
+        for (let d = 1; d <= 7 - remainder; d++) {
+            html += `<div class="month-cell other-month"><span class="day-num">${d}</span></div>`;
+        }
+    }
+
+    document.getElementById('monthGrid').innerHTML = html;
+}
+
+// ===== 作業者凡例 =====
+function renderLegend() {
+    const legend = document.getElementById('workerLegend');
+    const keys = Object.keys(workerColorMap).sort();
+    legend.innerHTML = keys.length ? keys.map(k =>
+        `<div class="legend-item">
+            <span class="legend-dot" style="background:${workerColorMap[k]};"></span>
+            <span>${escHtml(k)}</span>
+        </div>`
+    ).join('') : '';
+}
+
+// ===== ツールチップ =====
+function showTooltip(e, wo) {
+    const tp = document.getElementById('woTooltip');
+    const startStr = wo.planned_start ? wo.planned_start.replace(/-/g,'/') : '—';
+    const endStr   = wo.planned_end   ? wo.planned_end.replace(/-/g,'/')   : '—';
+    const statusMap = {pending:'取り掛かり前', in_progress:'作業中', completed:'完了'};
+    tp.innerHTML = `
+        <div style="font-weight:700;margin-bottom:4px;">${escHtml(wo.process_name)}</div>
+        <div>作業者: ${escHtml(wo.worker_name||'未割当')}</div>
+        <div>期間: ${startStr} 〜 ${endStr}</div>
+        <div>ステータス: ${statusMap[wo.status]||wo.status}</div>
+        ${wo.lot_name?`<div>ロット: ${escHtml(wo.lot_name)}</div>`:''}
+    `;
+    tp.style.display = 'block';
+    moveTooltip(e);
+}
+function showTooltipById(e, id) {
+    const wo = allWorkOrders.find(w => w.id === id);
+    if (wo) showTooltip(e, wo);
+}
+function moveTooltip(e) {
+    const tp = document.getElementById('woTooltip');
+    tp.style.left = (e.clientX + 14) + 'px';
+    tp.style.top  = (e.clientY + 14) + 'px';
+}
+function hideTooltip() { document.getElementById('woTooltip').style.display = 'none'; }
+
+// ===== ナビゲーション =====
+function prevMonth() { if (currentMonth === 0) { currentMonth=11; currentYear--; } else { currentMonth--; } render(); }
+function nextMonth() { if (currentMonth === 11) { currentMonth=0; currentYear++; } else { currentMonth++; } render(); }
+function goToday()   { currentYear=TODAY.getFullYear(); currentMonth=TODAY.getMonth(); render(); }
+
+function setView(v) {
+    currentView = v;
+    document.getElementById('ganttView').style.display  = v==='gantt' ? '' : 'none';
+    document.getElementById('monthView').style.display  = v==='month' ? '' : 'none';
+    document.getElementById('btnGantt').classList.toggle('active', v==='gantt');
+    document.getElementById('btnMonth').classList.toggle('active', v==='month');
+    render();
+}
+
+const MONTHS_JP = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+
+function render() {
+    document.getElementById('monthTitle').textContent = `${currentYear}年 ${MONTHS_JP[currentMonth]}`;
+    // colorMapを再構築（全作業者を先にスキャン）
+    Object.keys(workerColorMap).forEach(k => delete workerColorMap[k]);
+    colorIdx = 0;
+    allWorkOrders.forEach(wo => getWorkerColor(wo.worker_name || '未割当'));
+    renderLegend();
+
+    if (currentView === 'gantt') {
+        renderGantt(allWorkOrders);
+    } else {
+        renderMonth(allWorkOrders);
+    }
+}
+
+// ===== データ取得 =====
+fetch('/api/work_orders')
+    .then(r => r.json())
+    .then(data => {
+        allWorkOrders = data;
+        render();
+    })
+    .catch(e => {
+        console.error(e);
+        document.getElementById('ganttView').innerHTML =
+            '<div class="p-4 text-danger">データの読み込みに失敗しました。</div>';
+    });
+</script>
+{% endblock %}
