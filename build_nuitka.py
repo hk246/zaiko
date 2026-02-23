@@ -35,13 +35,22 @@ DIST_APP_DIR = os.path.join(OUTPUT_DIR, f"{DIST_NAME}.dist")
 def check_nuitka():
     """Nuitka がインストールされているか確認"""
     try:
+        # text=True / capture_output=True は Windows で文字コードデッドロックが起きるため
+        # bytes モードで受け取り、手動デコードする
         result = subprocess.run(
             [sys.executable, "-m", "nuitka", "--version"],
-            capture_output=True, text=True
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=60,
         )
         if result.returncode == 0:
-            print(f"Nuitka バージョン: {result.stdout.strip()}")
+            version = (result.stdout or result.stderr).decode("utf-8", errors="replace").strip()
+            print(f"Nuitka バージョン: {version}")
             return True
+    except subprocess.TimeoutExpired:
+        print("エラー: Nuitka の応答がタイムアウトしました（60秒）")
+        print("  ターミナルで  python -m nuitka --version  を直接実行して確認してください")
+        return False
     except Exception:
         pass
     print("エラー: Nuitka がインストールされていません")
