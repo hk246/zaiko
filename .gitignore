@@ -8,14 +8,17 @@ env/
 venv/
 ENV/
 
-# Flask
+# Database
 instance/
 *.db
 *.db-journal
 
 # Backups
 backups/
-*.db
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
 
 # IDEs
 .vscode/
@@ -33,6 +36,23 @@ Thumbs.db
 # PyInstaller / Nuitka ビルド成果物
 build/
 dist/
-*.spec
 *.zip
+
+# User config (machine-specific paths)
 config.json
+
+# Test data
+test_import_data.xlsx
+generate_test_import.py
+
+# Old Flask static output
+static/
+
+# Accidental directories
+-/
+
+# TypeScript build info
+frontend/tsconfig.tsbuildinfo
+
+# Old spec files
+在庫管理システム.spec
