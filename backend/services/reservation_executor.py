@@ -89,18 +89,30 @@ def _execute_use(db: Session, reservation: Reservation, payload: ReservationExec
 
 def _execute_replenish(db: Session, reservation: Reservation, payload: ReservationExecute) -> None:
     """Add stock to a lot (existing or new)."""
-    if reservation.lot_id:
-        lot = db.get(Lot, reservation.lot_id)
+    from backend.models.master import Tare
+
+    # Payload lot_id overrides reservation lot_id
+    target_lot_id = payload.lot_id if payload.lot_id is not None else reservation.lot_id
+
+    if target_lot_id:
+        lot = db.get(Lot, target_lot_id)
         if lot and not lot.deleted_at:
             lot.weight += payload.actual_quantity
+            reservation.lot_id = lot.id
             return
 
     # Create new lot
-    lot_name = reservation.lot_name or f"補充-{datetime.utcnow().strftime('%Y%m%d-%H%M')}"
+    lot_name = payload.lot_name or reservation.lot_name or f"補充-{datetime.utcnow().strftime('%Y%m%d-%H%M')}"
+    weight = payload.actual_quantity
+    if payload.tare_id:
+        tare = db.get(Tare, payload.tare_id)
+        if tare:
+            weight = max(0, weight - tare.weight)
+
     new_lot = Lot(
         material_id=reservation.material_id,
         lot_name=lot_name,
-        weight=payload.actual_quantity,
+        weight=weight,
     )
     db.add(new_lot)
     db.flush()

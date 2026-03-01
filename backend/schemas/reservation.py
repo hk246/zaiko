@@ -31,6 +31,10 @@ class ReservationExecute(BaseModel):
     lot_usages: list["LotUsageItem"] = []
     executed_by: str | None = None
     note: str | None = None
+    # Replenish overrides (take precedence over reservation fields)
+    lot_id: int | None = None       # target existing lot
+    lot_name: str | None = None     # name for new lot
+    tare_id: int | None = None      # subtract tare weight for new lot
 
 
 class LotUsageItem(BaseModel):
