@@ -1,15 +1,48 @@
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useDashboardSummary, useAlerts } from "@/api/hooks/useDashboard";
+import { useMaterials } from "@/api/hooks/useMaterials";
+import { useLabels } from "@/api/hooks/useLabels";
 import { useEmailDraft } from "@/api/hooks/useEmail";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { clsx } from "clsx";
 import { formatDate } from "@/lib/format";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer, Cell } from "recharts";
 import toast from "react-hot-toast";
 
 export default function Dashboard() {
   const { data: summary, isLoading } = useDashboardSummary();
   const { data: alerts } = useAlerts();
+  const { data: allMaterials } = useMaterials();
+  const { data: labels } = useLabels();
   const emailDraft = useEmailDraft();
+
+  // Stock margin chart state
+  const [marginLabelFilter, setMarginLabelFilter] = useState<string>("");
+  const [marginMode, setMarginMode] = useState<"absolute" | "ratio">("absolute");
+
+  // Filter materials for margin chart (only those with min_weight > 0)
+  const marginData = useMemo(() => {
+    if (!allMaterials) return [];
+    return allMaterials
+      .filter((m) => m.min_weight > 0)
+      .filter((m) => !marginLabelFilter || String(m.label?.id) === marginLabelFilter)
+      .map((m) => {
+        const margin = m.current_stock - m.min_weight;
+        const ratio = m.min_weight > 0 ? (m.current_stock / m.min_weight) * 100 : 0;
+        return {
+          id: m.id,
+          name: m.name,
+          label_name: m.label?.name ?? "",
+          current_stock: m.current_stock,
+          min_weight: m.min_weight,
+          margin,
+          ratio,
+          is_low: m.is_low_stock,
+        };
+      })
+      .sort((a, b) => (marginMode === "ratio" ? a.ratio - b.ratio : a.margin - b.margin));
+  }, [allMaterials, marginLabelFilter, marginMode]);
 
   if (isLoading) return <div className="py-20 text-center text-gray-400">読み込み中...</div>;
 
@@ -19,8 +52,10 @@ export default function Dashboard() {
     { label: "低在庫", value: summary?.low_stock_count ?? 0, to: "/materials?low_stock=1", color: "text-red-600", alert: true },
     { label: "未実行予約", value: summary?.pending_reservations ?? 0, to: "/reservations", color: "text-yellow-600" },
     { label: "期限切れ予約", value: summary?.overdue_reservations ?? 0, to: "/reservations", color: "text-red-600", alert: true },
-    { label: "進行中作業", value: summary?.active_work_orders ?? 0, to: "/work-orders", color: "text-blue-600" },
+    { label: "未完了作業", value: summary?.active_work_orders ?? 0, to: "/work-orders", color: "text-blue-600" },
   ];
+
+  const chartHeight = Math.max(200, marginData.length * 32 + 40);
 
   return (
     <div>
@@ -103,6 +138,100 @@ export default function Dashboard() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Stock Margin Chart */}
+      {allMaterials && allMaterials.length > 0 && (
+        <div className="card mb-6">
+          <div className="mb-4 flex items-center justify-between flex-wrap gap-3">
+            <h2 className="text-sm font-bold text-gray-800">在庫余裕度</h2>
+            <div className="flex items-center gap-3">
+              <select
+                className="input !py-1 !px-2 !text-xs w-auto"
+                value={marginLabelFilter}
+                onChange={(e) => setMarginLabelFilter(e.target.value)}
+              >
+                <option value="">全ラベル</option>
+                {labels?.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+              <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                <button
+                  className={clsx("px-3 py-1 text-xs font-medium transition-colors", marginMode === "absolute" ? "bg-primary-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50")}
+                  onClick={() => setMarginMode("absolute")}
+                >
+                  絶対値 (g)
+                </button>
+                <button
+                  className={clsx("px-3 py-1 text-xs font-medium transition-colors", marginMode === "ratio" ? "bg-primary-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50")}
+                  onClick={() => setMarginMode("ratio")}
+                >
+                  比率 (%)
+                </button>
+              </div>
+            </div>
+          </div>
+          {marginData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={chartHeight}>
+              <BarChart data={marginData} layout="vertical" margin={{ left: 10, right: 30, top: 5, bottom: 5 }}>
+                <XAxis
+                  type="number"
+                  tick={{ fontSize: 11 }}
+                  domain={marginMode === "ratio" ? [0, "auto"] : ["auto", "auto"]}
+                  tickFormatter={(v) => marginMode === "ratio" ? `${v.toFixed(0)}%` : `${v.toFixed(0)}`}
+                />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={100} />
+                <Tooltip
+                  formatter={(value: number, _name: string, props: { payload?: typeof marginData[0] }) => {
+                    const d = props.payload;
+                    if (!d) return [`${value}`, ""];
+                    if (marginMode === "ratio") {
+                      return [`${value.toFixed(1)}% (${d.current_stock.toFixed(1)}g / ${d.min_weight.toFixed(1)}g)`, "充足率"];
+                    }
+                    return [`${value.toFixed(1)}g (在庫: ${d.current_stock.toFixed(1)}g, 最低: ${d.min_weight.toFixed(1)}g)`, "余裕量"];
+                  }}
+                  labelFormatter={(label) => `${label}`}
+                />
+                {marginMode === "ratio" && (
+                  <ReferenceLine x={100} stroke="#f59e0b" strokeDasharray="4 4" label={{ value: "100%", position: "top", fontSize: 10 }} />
+                )}
+                {marginMode === "absolute" && (
+                  <ReferenceLine x={0} stroke="#ef4444" strokeDasharray="4 4" />
+                )}
+                <Bar dataKey={marginMode === "ratio" ? "ratio" : "margin"} radius={[0, 4, 4, 0]} maxBarSize={24}>
+                  {marginData.map((d, i) => {
+                    let fill: string;
+                    if (marginMode === "ratio") {
+                      fill = d.ratio >= 200 ? "#22c55e" : d.ratio >= 100 ? "#3b82f6" : d.ratio >= 50 ? "#f59e0b" : "#ef4444";
+                    } else {
+                      fill = d.margin > 0 ? (d.is_low ? "#f59e0b" : "#3b82f6") : "#ef4444";
+                    }
+                    return <Cell key={i} fill={fill} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="py-6 text-center text-sm text-gray-400">最低在庫量が設定された材料がありません</p>
+          )}
+          <div className="mt-2 flex items-center justify-center gap-4 text-[10px] text-gray-500">
+            {marginMode === "ratio" ? (
+              <>
+                <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded bg-red-500" />50%未満</span>
+                <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded bg-yellow-500" />50〜100%</span>
+                <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded bg-blue-500" />100〜200%</span>
+                <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded bg-green-500" />200%以上</span>
+              </>
+            ) : (
+              <>
+                <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded bg-red-500" />不足</span>
+                <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded bg-yellow-500" />低在庫</span>
+                <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded bg-blue-500" />余裕あり</span>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -213,58 +213,86 @@ export default function MaterialDetail() {
         </div>
       )}
 
-      {/* Lots Table */}
-      <div className="card p-0">
-        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
-          <h2 className="text-sm font-bold text-gray-800">ロット一覧 ({lots?.length ?? 0})</h2>
-          <div className="flex gap-2">
-            <button onClick={() => setShowImportLot(true)} className="btn-secondary btn-sm">Excelインポート</button>
-            <button onClick={() => setShowAddLot(true)} className="btn-primary btn-sm">+ ロット追加</button>
+      {/* Lots Table with Properties */}
+      {(() => {
+        // Collect unique property fields across all lots
+        const propFieldMap = new Map<number, { field_id: number; field_name: string; field_type: string; unit: string | null }>();
+        lots?.forEach((l) =>
+          l.properties.forEach((p) => {
+            if (!propFieldMap.has(p.field_id)) propFieldMap.set(p.field_id, p);
+          }),
+        );
+        const propFields = Array.from(propFieldMap.values());
+        return (
+          <div className="card p-0">
+            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+              <h2 className="text-sm font-bold text-gray-800">ロット一覧 ({lots?.length ?? 0})</h2>
+              <div className="flex gap-2">
+                <button onClick={() => setShowImportLot(true)} className="btn-secondary btn-sm">Excelインポート</button>
+                <button onClick={() => setShowAddLot(true)} className="btn-primary btn-sm">+ ロット追加</button>
+              </div>
+            </div>
+            {lots?.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-gray-100 bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 font-medium text-gray-500">ロット名</th>
+                      <th className="px-4 py-2 font-medium text-gray-500 text-right">重量</th>
+                      {propFields.map((pf) => (
+                        <th key={pf.field_id} className="px-4 py-2 font-medium text-gray-500 text-right whitespace-nowrap">
+                          {pf.field_name}{pf.unit ? ` (${pf.unit})` : ""}
+                        </th>
+                      ))}
+                      <th className="px-4 py-2 font-medium text-gray-500 text-center">端数</th>
+                      <th className="px-4 py-2 font-medium text-gray-500">作成日</th>
+                      <th className="px-4 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {lots.map((l) => (
+                      <tr key={l.id} className={`hover:bg-gray-50 ${l.is_fraction ? "opacity-60" : ""}`}>
+                        <td className="px-4 py-2 font-medium text-gray-800">
+                          <button onClick={() => openEditLot(l)} className="text-left hover:text-blue-600 hover:underline cursor-pointer">{l.lot_name}</button>
+                        </td>
+                        <td className="px-4 py-2 text-right">{formatWeight(l.weight)}</td>
+                        {propFields.map((pf) => {
+                          const prop = l.properties.find((p) => p.field_id === pf.field_id);
+                          const val = prop ? (pf.field_type === "number" ? prop.value_number?.toFixed(2) : prop.value_string) : null;
+                          return (
+                            <td key={pf.field_id} className="px-4 py-2 text-right text-gray-600">
+                              {val ?? <span className="text-gray-300">-</span>}
+                            </td>
+                          );
+                        })}
+                        <td className="px-4 py-2 text-center">
+                          <button
+                            onClick={() => toggleFraction.mutate(l.id)}
+                            className={`badge cursor-pointer ${l.is_fraction ? "bg-yellow-100 text-yellow-700" : "bg-gray-100 text-gray-500"}`}
+                          >
+                            {l.is_fraction ? "端数" : "-"}
+                          </button>
+                        </td>
+                        <td className="px-4 py-2 text-gray-500 text-xs">{formatDate(l.created_at)}</td>
+                        <td className="px-4 py-2 text-right">
+                          <button
+                            onClick={async () => { if (await confirm(`「${l.lot_name}」を削除しますか？`)) deleteLot.mutate(l.id); }}
+                            className="text-xs text-red-500 hover:text-red-700"
+                          >
+                            削除
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="py-10 text-center text-sm text-gray-400">ロットがありません</div>
+            )}
           </div>
-        </div>
-        {lots?.length ? (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-gray-100 bg-gray-50">
-              <tr>
-                <th className="px-4 py-2 font-medium text-gray-500">ロット名</th>
-                <th className="px-4 py-2 font-medium text-gray-500 text-right">重量</th>
-                <th className="px-4 py-2 font-medium text-gray-500 text-center">端数</th>
-                <th className="px-4 py-2 font-medium text-gray-500">作成日</th>
-                <th className="px-4 py-2"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {lots.map((l) => (
-                <tr key={l.id} className={`hover:bg-gray-50 ${l.is_fraction ? "opacity-60" : ""}`}>
-                  <td className="px-4 py-2 font-medium text-gray-800">
-                    <button onClick={() => openEditLot(l)} className="text-left hover:text-blue-600 hover:underline cursor-pointer">{l.lot_name}</button>
-                  </td>
-                  <td className="px-4 py-2 text-right">{formatWeight(l.weight)}</td>
-                  <td className="px-4 py-2 text-center">
-                    <button
-                      onClick={() => toggleFraction.mutate(l.id)}
-                      className={`badge cursor-pointer ${l.is_fraction ? "bg-yellow-100 text-yellow-700" : "bg-gray-100 text-gray-500"}`}
-                    >
-                      {l.is_fraction ? "端数" : "-"}
-                    </button>
-                  </td>
-                  <td className="px-4 py-2 text-gray-500 text-xs">{formatDate(l.created_at)}</td>
-                  <td className="px-4 py-2 text-right">
-                    <button
-                      onClick={async () => { if (await confirm(`「${l.lot_name}」を削除しますか？`)) deleteLot.mutate(l.id); }}
-                      className="text-xs text-red-500 hover:text-red-700"
-                    >
-                      削除
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="py-10 text-center text-sm text-gray-400">ロットがありません</div>
-        )}
-      </div>
+        );
+      })()}
 
       {/* Edit Lot Modal */}
       <Modal open={!!editingLot} onClose={() => setEditingLot(null)} title="ロット編集">
