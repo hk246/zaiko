@@ -77,8 +77,14 @@ def update_lot(material_id: int, lot_id: int, body: LotUpdate, db: Session = Dep
     lot = db.get(Lot, lot_id)
     if not lot or lot.deleted_at or lot.material_id != material_id:
         raise HTTPException(404, "Lot not found")
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    tare_id = data.pop("tare_id", None)
+    for k, v in data.items():
         setattr(lot, k, v)
+    if tare_id and body.weight is not None:
+        tare = db.get(Tare, tare_id)
+        if tare:
+            lot.weight = max(0, body.weight - tare.weight)
     db.commit()
     db.refresh(lot)
     return _lot_to_read(lot, db)

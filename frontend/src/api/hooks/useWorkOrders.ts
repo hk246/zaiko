@@ -22,10 +22,15 @@ export function useCreateWorkOrder() {
   });
 }
 
-export function useUpdateWorkOrder(id: number) {
+export function useUpdateWorkOrder(id?: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: Record<string, unknown>) => api.put<WorkOrder>(`/work-orders/${id}`, body),
+    mutationFn: (args: Record<string, unknown> | { id: number; body: Record<string, unknown> }) => {
+      if ("id" in args && "body" in args) {
+        return api.put<WorkOrder>(`/work-orders/${args.id}`, args.body as Record<string, unknown>);
+      }
+      return api.put<WorkOrder>(`/work-orders/${id}`, args);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["work-orders"] }),
   });
 }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useWorkOrders, useCreateWorkOrder, useDeleteWorkOrder, useArchiveWorkOrder } from "@/api/hooks/useWorkOrders";
+import { useWorkOrders, useCreateWorkOrder, useUpdateWorkOrder, useDeleteWorkOrder, useArchiveWorkOrder } from "@/api/hooks/useWorkOrders";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
@@ -18,15 +18,66 @@ export default function WorkOrders() {
   const [showImport, setShowImport] = useState(false);
   const { data: workOrders, isLoading } = useWorkOrders({ status: statusFilter, archived: showArchived });
   const createMutation = useCreateWorkOrder();
+  const updateMutation = useUpdateWorkOrder();
   const deleteMutation = useDeleteWorkOrder();
   const archiveMutation = useArchiveWorkOrder();
   const confirm = useConfirm();
 
   const [showAdd, setShowAdd] = useState(false);
+  const [editingWO, setEditingWO] = useState<{
+    id: number; process_name: string; status: string; priority: string;
+    worker_name: string; experiment_type: string;
+    planned_start: string; planned_end: string;
+    actual_start: string; actual_end: string;
+    invoice_issued: boolean; notes: string;
+  } | null>(null);
   const [form, setForm] = useState({
     process_name: "", priority: "none", worker_name: "", experiment_type: "standard",
     planned_start: "", planned_end: "", notes: "",
   });
+
+  const openEditWO = (wo: import("@/api/types").WorkOrder) => {
+    setEditingWO({
+      id: wo.id,
+      process_name: wo.process_name,
+      status: wo.status,
+      priority: wo.priority,
+      worker_name: wo.worker_name ?? "",
+      experiment_type: wo.experiment_type,
+      planned_start: wo.planned_start ?? "",
+      planned_end: wo.planned_end ?? "",
+      actual_start: wo.actual_start ?? "",
+      actual_end: wo.actual_end ?? "",
+      invoice_issued: wo.invoice_issued,
+      notes: wo.notes ?? "",
+    });
+  };
+
+  const handleSaveWO = () => {
+    if (!editingWO) return;
+    updateMutation.mutate(
+      {
+        id: editingWO.id,
+        body: {
+          process_name: editingWO.process_name,
+          status: editingWO.status,
+          priority: editingWO.priority,
+          worker_name: editingWO.worker_name || null,
+          experiment_type: editingWO.experiment_type,
+          planned_start: editingWO.planned_start || null,
+          planned_end: editingWO.planned_end || null,
+          actual_start: editingWO.actual_start || null,
+          actual_end: editingWO.actual_end || null,
+          invoice_issued: editingWO.invoice_issued,
+          notes: editingWO.notes || null,
+        },
+      },
+      {
+        onSuccess: () => { toast.success("作業工程を更新しました"); setEditingWO(null); },
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  };
 
   const handleCreate = () => {
     createMutation.mutate(
@@ -94,7 +145,7 @@ export default function WorkOrders() {
               <div className="flex items-center gap-4 min-w-0">
                 <span className={clsx("badge", PRIORITY_COLORS[wo.priority])}>{PRIORITY_LABELS[wo.priority]}</span>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-800 truncate">{wo.process_name}</p>
+                  <button onClick={() => openEditWO(wo)} className="text-sm font-medium text-gray-800 truncate text-left hover:text-blue-600 hover:underline cursor-pointer">{wo.process_name}</button>
                   <p className="text-xs text-gray-500">
                     {wo.worker_name && `${wo.worker_name} · `}
                     {formatDate(wo.planned_start)} ～ {formatDate(wo.planned_end)}
@@ -177,6 +228,84 @@ export default function WorkOrders() {
             <button className="btn-primary" onClick={handleCreate} disabled={!form.process_name || createMutation.isPending}>追加</button>
           </div>
         </div>
+      </Modal>
+
+      {/* Edit Modal */}
+      <Modal open={!!editingWO} onClose={() => setEditingWO(null)} title="作業工程編集" wide>
+        {editingWO && (
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">工程名</label>
+              <input className="input" value={editingWO.process_name} onChange={(e) => setEditingWO({ ...editingWO, process_name: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">ステータス</label>
+                <select className="input" value={editingWO.status} onChange={(e) => setEditingWO({ ...editingWO, status: e.target.value })}>
+                  <option value="pending">未実行</option>
+                  <option value="in_progress">進行中</option>
+                  <option value="completed">完了</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">優先度</label>
+                <select className="input" value={editingWO.priority} onChange={(e) => setEditingWO({ ...editingWO, priority: e.target.value })}>
+                  <option value="none">なし</option>
+                  <option value="low">低</option>
+                  <option value="high">高</option>
+                  <option value="critical">緊急</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">種別</label>
+                <select className="input" value={editingWO.experiment_type} onChange={(e) => setEditingWO({ ...editingWO, experiment_type: e.target.value })}>
+                  <option value="standard">通常</option>
+                  <option value="experiment">実験</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">担当者</label>
+                <ContactPicker value={editingWO.worker_name} onChange={(name) => setEditingWO({ ...editingWO, worker_name: name })} placeholder="担当者を選択" />
+              </div>
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer mt-6">
+                  <input type="checkbox" checked={editingWO.invoice_issued} onChange={(e) => setEditingWO({ ...editingWO, invoice_issued: e.target.checked })} className="rounded" />
+                  請求済
+                </label>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">予定開始日</label>
+                <input className="input" type="date" value={editingWO.planned_start} onChange={(e) => setEditingWO({ ...editingWO, planned_start: e.target.value })} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">予定終了日</label>
+                <input className="input" type="date" value={editingWO.planned_end} onChange={(e) => setEditingWO({ ...editingWO, planned_end: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">実開始日</label>
+                <input className="input" type="date" value={editingWO.actual_start} onChange={(e) => setEditingWO({ ...editingWO, actual_start: e.target.value })} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">実完了日</label>
+                <input className="input" type="date" value={editingWO.actual_end} onChange={(e) => setEditingWO({ ...editingWO, actual_end: e.target.value })} />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">メモ</label>
+              <textarea className="input" rows={2} value={editingWO.notes} onChange={(e) => setEditingWO({ ...editingWO, notes: e.target.value })} />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button className="btn-secondary" onClick={() => setEditingWO(null)}>キャンセル</button>
+              <button className="btn-primary" onClick={handleSaveWO} disabled={!editingWO.process_name || updateMutation.isPending}>保存</button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       <ImportModal

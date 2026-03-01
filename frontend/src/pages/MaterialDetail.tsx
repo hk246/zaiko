@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useMaterial, useLots, useCreateLot, useDeleteLot, useToggleFraction, useUpdateMaterial } from "@/api/hooks/useMaterials";
+import { useQuery } from "@tanstack/react-query";
+import { useMaterial, useLots, useCreateLot, useUpdateLot, useDeleteLot, useToggleFraction, useUpdateMaterial } from "@/api/hooks/useMaterials";
 import { useMaterialStats, useMaterialTimeline } from "@/api/hooks/useDashboard";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { StockBadge } from "@/components/ui/StockBadge";
@@ -10,6 +11,8 @@ import { useContacts } from "@/api/hooks/useContacts";
 import { useEmailDraft } from "@/api/hooks/useEmail";
 import { useConfirm } from "@/components/ui/ConfirmDialog";
 import { formatDate, formatWeight } from "@/lib/format";
+import { api } from "@/api/client";
+import type { Tare } from "@/api/types";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ReferenceLine, ResponsiveContainer } from "recharts";
 import toast from "react-hot-toast";
 
@@ -20,10 +23,12 @@ export default function MaterialDetail() {
   const { data: stats } = useMaterialStats(id!);
   const { data: timeline } = useMaterialTimeline(id!);
   const createLot = useCreateLot(id!);
+  const updateLot = useUpdateLot(id!);
   const deleteLot = useDeleteLot(id!);
   const toggleFraction = useToggleFraction(id!);
   const updateMaterial = useUpdateMaterial(id!);
   const { data: contacts } = useContacts();
+  const { data: tares } = useQuery({ queryKey: ["tares"], queryFn: () => api.get<Tare[]>("/tares") });
   const emailDraft = useEmailDraft();
   const confirm = useConfirm();
 
@@ -31,7 +36,8 @@ export default function MaterialDetail() {
   const [showImportLot, setShowImportLot] = useState(false);
   const [showImportProps, setShowImportProps] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
-  const [lotForm, setLotForm] = useState({ lot_name: "", weight: "" });
+  const [editingLot, setEditingLot] = useState<{ id: number; lot_name: string; weight: string; is_fraction: boolean; tare_id: string } | null>(null);
+  const [lotForm, setLotForm] = useState({ lot_name: "", weight: "", tare_id: "" });
   const [editForm, setEditForm] = useState({ name: "", min_weight: "", action_type: "none", contact_id: "" });
 
   if (isLoading) return <div className="py-20 text-center text-gray-400">読み込み中...</div>;
@@ -54,10 +60,26 @@ export default function MaterialDetail() {
     );
   };
 
+  const openEditLot = (lot: { id: number; lot_name: string; weight: number; is_fraction: boolean }) => {
+    setEditingLot({ id: lot.id, lot_name: lot.lot_name, weight: String(lot.weight), is_fraction: lot.is_fraction, tare_id: "" });
+  };
+
+  const handleSaveLot = () => {
+    if (!editingLot) return;
+    const body: Record<string, unknown> = { lot_name: editingLot.lot_name, weight: parseFloat(editingLot.weight) || 0, is_fraction: editingLot.is_fraction };
+    if (editingLot.tare_id) body.tare_id = parseInt(editingLot.tare_id);
+    updateLot.mutate(
+      { lotId: editingLot.id, body },
+      { onSuccess: () => { toast.success("ロットを更新しました"); setEditingLot(null); }, onError: (e) => toast.error(e.message) },
+    );
+  };
+
   const handleAddLot = () => {
+    const body: Record<string, unknown> = { lot_name: lotForm.lot_name, weight: parseFloat(lotForm.weight) || 0 };
+    if (lotForm.tare_id) body.tare_id = parseInt(lotForm.tare_id);
     createLot.mutate(
-      { lot_name: lotForm.lot_name, weight: parseFloat(lotForm.weight) || 0 },
-      { onSuccess: () => { toast.success("ロットを追加しました"); setShowAddLot(false); setLotForm({ lot_name: "", weight: "" }); }, onError: (e) => toast.error(e.message) },
+      body,
+      { onSuccess: () => { toast.success("ロットを追加しました"); setShowAddLot(false); setLotForm({ lot_name: "", weight: "", tare_id: "" }); }, onError: (e) => toast.error(e.message) },
     );
   };
 
@@ -214,7 +236,9 @@ export default function MaterialDetail() {
             <tbody className="divide-y divide-gray-50">
               {lots.map((l) => (
                 <tr key={l.id} className={`hover:bg-gray-50 ${l.is_fraction ? "opacity-60" : ""}`}>
-                  <td className="px-4 py-2 font-medium text-gray-800">{l.lot_name}</td>
+                  <td className="px-4 py-2 font-medium text-gray-800">
+                    <button onClick={() => openEditLot(l)} className="text-left hover:text-blue-600 hover:underline cursor-pointer">{l.lot_name}</button>
+                  </td>
                   <td className="px-4 py-2 text-right">{formatWeight(l.weight)}</td>
                   <td className="px-4 py-2 text-center">
                     <button
@@ -242,22 +266,92 @@ export default function MaterialDetail() {
         )}
       </div>
 
+      {/* Edit Lot Modal */}
+      <Modal open={!!editingLot} onClose={() => setEditingLot(null)} title="ロット編集">
+        {editingLot && (() => {
+          const selectedTare = tares?.find((t) => String(t.id) === editingLot.tare_id);
+          const grossWeight = parseFloat(editingLot.weight) || 0;
+          const netWeight = selectedTare ? Math.max(0, grossWeight - selectedTare.weight) : grossWeight;
+          return (
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">ロット名</label>
+                <input className="input" value={editingLot.lot_name} onChange={(e) => setEditingLot({ ...editingLot, lot_name: e.target.value })} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">重量 (g)</label>
+                <input className="input" type="number" step="0.1" value={editingLot.weight} onChange={(e) => setEditingLot({ ...editingLot, weight: e.target.value })} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">風袋</label>
+                <select className="input" value={editingLot.tare_id} onChange={(e) => setEditingLot({ ...editingLot, tare_id: e.target.value })}>
+                  <option value="">なし</option>
+                  {tares?.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name} ({t.weight} g)</option>
+                  ))}
+                </select>
+              </div>
+              {selectedTare && (
+                <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm">
+                  <p className="text-blue-700">
+                    入力値 <strong>{grossWeight.toFixed(1)} g</strong> − 風袋 <strong>{selectedTare.weight} g</strong> = 正味 <strong className="text-blue-900">{netWeight.toFixed(1)} g</strong>
+                  </p>
+                </div>
+              )}
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer">
+                  <input type="checkbox" checked={editingLot.is_fraction} onChange={(e) => setEditingLot({ ...editingLot, is_fraction: e.target.checked })} className="rounded" />
+                  端数ロット
+                </label>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button className="btn-secondary" onClick={() => setEditingLot(null)}>キャンセル</button>
+                <button className="btn-primary" onClick={handleSaveLot} disabled={!editingLot.lot_name || updateLot.isPending}>保存</button>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
       {/* Add Lot Modal */}
       <Modal open={showAddLot} onClose={() => setShowAddLot(false)} title="ロット追加">
-        <div className="space-y-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">ロット名</label>
-            <input className="input" value={lotForm.lot_name} onChange={(e) => setLotForm({ ...lotForm, lot_name: e.target.value })} />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">重量 (g)</label>
-            <input className="input" type="number" step="0.1" value={lotForm.weight} onChange={(e) => setLotForm({ ...lotForm, weight: e.target.value })} />
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <button className="btn-secondary" onClick={() => setShowAddLot(false)}>キャンセル</button>
-            <button className="btn-primary" onClick={handleAddLot} disabled={!lotForm.lot_name || createLot.isPending}>追加</button>
-          </div>
-        </div>
+        {(() => {
+          const selectedTare = tares?.find((t) => String(t.id) === lotForm.tare_id);
+          const grossWeight = parseFloat(lotForm.weight) || 0;
+          const netWeight = selectedTare ? Math.max(0, grossWeight - selectedTare.weight) : grossWeight;
+          return (
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">ロット名</label>
+                <input className="input" value={lotForm.lot_name} onChange={(e) => setLotForm({ ...lotForm, lot_name: e.target.value })} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">重量 (g)</label>
+                <input className="input" type="number" step="0.1" value={lotForm.weight} onChange={(e) => setLotForm({ ...lotForm, weight: e.target.value })} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">風袋</label>
+                <select className="input" value={lotForm.tare_id} onChange={(e) => setLotForm({ ...lotForm, tare_id: e.target.value })}>
+                  <option value="">なし</option>
+                  {tares?.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name} ({t.weight} g)</option>
+                  ))}
+                </select>
+              </div>
+              {selectedTare && (
+                <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm">
+                  <p className="text-blue-700">
+                    入力値 <strong>{grossWeight.toFixed(1)} g</strong> − 風袋 <strong>{selectedTare.weight} g</strong> = 正味 <strong className="text-blue-900">{netWeight.toFixed(1)} g</strong>
+                  </p>
+                </div>
+              )}
+              <div className="flex justify-end gap-2 pt-2">
+                <button className="btn-secondary" onClick={() => setShowAddLot(false)}>キャンセル</button>
+                <button className="btn-primary" onClick={handleAddLot} disabled={!lotForm.lot_name || createLot.isPending}>追加</button>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
 
       <ImportModal

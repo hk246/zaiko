@@ -16,6 +16,7 @@ class LotUpdate(BaseModel):
     lot_name: str | None = Field(default=None, max_length=100)
     weight: float | None = Field(default=None, ge=0)
     is_fraction: bool | None = None
+    tare_id: int | None = None  # optional: subtract tare weight from weight
 
 
 class LotRead(BaseModel):
